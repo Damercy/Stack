@@ -8,6 +8,9 @@ import android.media.AudioManager
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleCallback
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.*
 import com.stackapp.stack.offbalance.*
 import com.stackapp.stack.tap.RoomTapStore
@@ -29,8 +32,14 @@ class OffBalanceJourneyTest {
     private var originalName=""
     private val events=java.util.concurrent.CopyOnWriteArrayList<ProductEvent>()
     private lateinit var account:JourneyAccount
+    private val keepAwake=ActivityLifecycleCallback{activity,stage->
+        if(stage==Stage.RESUMED)activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
     @Before fun launch(){
         android.util.Log.i("BalanceJourney","setup")
+        device.wakeUp()
+        device.setOrientationNatural()
+        ActivityLifecycleMonitorRegistry.getInstance().addLifecycleCallback(keepAwake)
         Configurator.getInstance().waitForIdleTimeout=0
         original=listOf("off_balance","rivals","balance_reminders","balance_flags","style_pack").associateWith{context.getSharedPreferences(it,Context.MODE_PRIVATE).all}
         originalName=RoomTapStore(context).load().displayName.orEmpty()
@@ -44,28 +53,48 @@ class OffBalanceJourneyTest {
         account=JourneyAccount();BalanceAccountFactory.testAccount=account
         BalanceAnalyticsTestSink.accept={events.add(it)}
         events.clear();scenario=ActivityScenario.launch(MainActivity::class.java)
+        scenario.onActivity{it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
         requireText("PLAY")
         android.util.Log.i("BalanceJourney","ready")
     }
     @After fun restore(){
         device.pressHome()
+        ActivityLifecycleMonitorRegistry.getInstance().removeLifecycleCallback(keepAwake)
         scenario.close();CompetitionFactory.testRepository=null;StylePackFactory.testStore=null
         BalanceAccountFactory.testAccount=null;ReviewGatewayFactory.testGateway=null;BalanceAnalyticsTestSink.accept=null
         original.forEach{(name,values)->val e=context.getSharedPreferences(name,Context.MODE_PRIVATE).edit().clear()
             values.forEach{(k,v)->when(v){is String->e.putString(k,v);is Boolean->e.putBoolean(k,v);is Int->e.putInt(k,v);is Long->e.putLong(k,v);is Float->e.putFloat(k,v);is Set<*>->{@Suppress("UNCHECKED_CAST") e.putStringSet(k,v as Set<String>)}}};e.commit()}
         RoomTapStore(context).saveDisplayName(originalName)
-        BalanceReminders(context).sync();device.unfreezeRotation()
+        BalanceReminders(context).sync();device.setOrientationNatural();device.unfreezeRotation()
     }
     private fun missing(message:String):Nothing {device.dumpWindowHierarchy(java.io.File(context.cacheDir,"failure-journey.xml"));error(message)}
-    private fun requireText(value:String)=device.wait(Until.findObject(By.text(value)),10_000) ?: missing("Missing text: $value")
-    private fun described(value:String):UiObject2 {device.wait(Until.hasObject(By.desc(value)),10_000);clock(300);return device.findObject(By.desc(value)) ?: missing("Missing control: $value")}
+    private fun requireText(value:String):UiObject2 {
+        device.waitForIdle(100)
+        return device.wait(Until.findObject(By.text(value)),10_000) ?: run {
+            // A window transition can leave the accessibility lookup cache behind its tree.
+            device.dumpWindowHierarchy(java.io.File(context.cacheDir,"lookup-refresh.xml"))
+            device.findObject(By.text(value)) ?: missing("Missing text: $value")
+        }
+    }
+    private fun described(value:String):UiObject2 {device.wait(Until.hasObject(By.desc(value)),10_000);clock(650);device.dumpWindowHierarchy(java.io.File(context.cacheDir,"control-refresh.xml"));return device.findObject(By.desc(value)) ?: missing("Missing control: $value")}
     private fun resource(value:String)=device.wait(Until.findObject(By.res(value)),10_000) ?: missing("Missing element: $value")
     private fun tap(value:String){
         android.util.Log.i("BalanceJourney","tap $value")
         if(!device.wait(Until.hasObject(By.text(value)),1_000)){
             repeat(4){if(!device.hasObject(By.text(value)))device.findObject(By.scrollable(true))?.scroll(Direction.DOWN,.5f)}
         }
-        requireText(value);clock(300);requireText(value).click();android.util.Log.i("BalanceJourney","tapped $value")
+        requireText(value);clock(650)
+        device.dumpWindowHierarchy(java.io.File(context.cacheDir,"tap-refresh.xml"))
+        var bounds=requireText(value).visibleBounds
+        var stable=0
+        val deadline=android.os.SystemClock.uptimeMillis()+3_000
+        while(stable<3 && android.os.SystemClock.uptimeMillis()<deadline){
+            clock(100)
+            val next=requireText(value).visibleBounds
+            stable=if(next==bounds)stable+1 else 0
+            bounds=next
+        }
+        device.click(bounds.centerX(),bounds.centerY());android.util.Log.i("BalanceJourney","tapped $value")
     }
     private fun music(state:String){android.util.Log.i("BalanceJourney","expect music $state");val found=device.wait(Until.hasObject(By.descContains("Music $state")),10_000)
         if(!found)device.dumpWindowHierarchy(java.io.File(context.cacheDir,"audio-journey.xml"))
@@ -136,11 +165,17 @@ class OffBalanceJourneyTest {
     @Test fun muteAndUnmuteWhilePausedDoNotResetTheTower(){
         play();drop();waitScore(1);pause();tap("SETTINGS")
         val margin=(6*context.resources.displayMetrics.density).toInt()
-        val slider=described("MUSIC").visibleBounds;device.click(slider.left+margin,slider.centerY());requireText("0%");tap("DONE");tap("RESUME");music("paused");assertEquals(1,score())
+        val slider=described("MUSIC").visibleBounds;device.click(slider.left+margin,slider.centerY());requireText("0%");tap("DONE");tap("RESUME");assertTrue(device.wait(Until.hasObject(By.desc("Run: 1 layers, playing")),10_000));music("paused");assertEquals(1,score())
         pause();tap("SETTINGS");val s=described("MUSIC").visibleBounds;device.click(s.right-margin,s.centerY());requireText("100%");tap("DONE");tap("RESUME");music("playing");assertEquals(1,score())
     }
-    @Test fun switchingPreviewTracksThenLeavingStopsThePreview(){settings();tap("SOUNDTRACK ›");tap("SIDE A");music("playing");tap("NIGHT RUN");music("playing");tap("SIDE B");music("playing");tap("DONE");music("paused");tap("DONE");requireText("PLAY")}
-    @Test fun rotationPreservesAnActiveTowerAndKeepsPauseReachable(){play();drop();waitScore(1);device.setOrientationLeft();music("playing");assertEquals(1,score());pause();tap("RESUME");device.setOrientationNatural();assertEquals(1,score())}
+    @Test fun switchingPreviewTracksThenLeavingStopsThePreview(){settings();tap("SOUNDTRACK ›");tap("MIDNIGHT SIGNAL");music("playing");tap("NIGHT RUN");music("playing");tap("SIDE B");music("playing");tap("DONE");music("paused");tap("DONE");requireText("PLAY")}
+    @Test fun rotationPreservesAnActiveTowerAndKeepsPauseReachable(){
+        play();drop();waitScore(1);device.setOrientationLeft()
+        val until=android.os.SystemClock.uptimeMillis()+5_000
+        while(resource("run_status").visibleBounds.width()<=device.displayHeight && android.os.SystemClock.uptimeMillis()<until)clock(100)
+        assertTrue("Game layout must complete its rotation",resource("run_status").visibleBounds.width()>device.displayHeight)
+        music("playing");assertEquals(1,score());pause();tap("RESUME");device.setOrientationNatural();assertEquals(1,score())
+    }
     @Test fun trialLocksCannotBeBypassed(){tap("TRIALS");tap("04 / MIX IT UP");tap("START TRIAL");requireText("TRIAL 01");drop();waitScore(1);assertFalse(device.hasObject(By.text("NEXT TRIAL")))}
     @Test fun usernameTakenDoesNotSaveOrLeaveTheScreen(){server.registered=false;friends();tap("SET USERNAME");resource("username_entry").text="rival_one";tap("SAVE");requireText("Username taken.");resource("username_entry").text="new_player";tap("SAVE");requireText("SHARE @new_player")}
     @Test fun friendSearchBookmarkComparisonRefreshAndUnfollow(){
@@ -158,7 +193,7 @@ class OffBalanceJourneyTest {
     @Test fun freshInstallTeachesLandingAndBalanceThenStartsAnUngatedRun(){
         freshLesson();assertFalse(device.hasObject(By.text("CONTINUE WITH GOOGLE")));assertFalse(device.hasObject(By.textStartsWith("UNLOCK")))
         described("Drop practice block").click();tap("NEXT");requireText("BALANCE");holdBalance(true);requireText("✓ LEFT");holdBalance(false);requireText("RIGHT ✓");tap("NEXT");requireText("YOU'RE IN");tap("LET'S STACK")
-        resource("thumb_drop").click();waitScore(1);pause();tap("END RUN");requireText("PLAY")
+        drop();waitScore(1);pause();tap("END RUN");requireText("PLAY")
         assertTrue(context.getSharedPreferences("off_balance",Context.MODE_PRIVATE).getBoolean("introduced",false))
         assertEquals(1,events.count{it.name=="tutorial_complete"});assertEquals(2,events.count{it.name=="tutorial_step_complete"});assertEquals(1,events.count{it.name=="tower_run_start"});assertEquals(1,events.count{it.name=="tower_run_end"})
         assertTrue(events.all{event->event.fields.keys.none{it in setOf("username","email","token","uid")}})
@@ -173,9 +208,31 @@ class OffBalanceJourneyTest {
         freshLesson();described("Drop practice block").click();device.pressHome();clock(1200);assertFalse(context.getSystemService(AudioManager::class.java).isMusicActive)
         context.startActivity(context.packageManager.getLaunchIntentForPackage(context.packageName)!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));requireText("LAND IT");described("Skip lesson").click();requireText("PLAY");scenario.recreate();requireText("PLAY");assertFalse(device.hasObject(By.text("LAND IT")));assertEquals(1,events.count{it.name=="tutorial_skip"})
     }
-    @Test fun thumbDropIsReachableAndRepeatedPressesDoNotDuplicateLandings(){
-        play();val b=resource("thumb_drop").visibleBounds;assertTrue(b.centerY()>device.displayHeight*.72f)
-        repeat(3){device.click(b.centerX(),b.centerY())};waitScore(1);pause();assertEquals(1,score())
+    private fun lessonToAccount(){
+        flags(mapOf("google_sign_in_enabled" to true));freshLesson()
+        described("Drop practice block").click();tap("NEXT");holdBalance(true);holdBalance(false);tap("NEXT");requireText("CONTINUE WITH GOOGLE")
+    }
+    @Test fun onboardingGoogleCancellationAndFailureHaveAGuestExit(){
+        lessonToAccount();account.result="cancel";tap("CONTINUE WITH GOOGLE");requireText("PLAY AS GUEST")
+        account.result="fail";tap("CONTINUE WITH GOOGLE");requireText("Couldn’t sign in. Try again.")
+        tap("PLAY AS GUEST");waitScore(0);drop();waitScore(1)
+        assertEquals(1,events.count{it.name=="tutorial_complete"})
+    }
+    @Test fun onboardingGoogleSuccessStaysVisibleAcrossRecreationThenPlays(){
+        lessonToAccount();tap("CONTINUE WITH GOOGLE");requireText("SAVED WITH GOOGLE. READY WHEN YOU ARE.")
+        scenario.recreate();requireText("LET'S STACK");assertTrue(account.state.value.signedIn)
+        tap("LET'S STACK");waitScore(0);drop();waitScore(1)
+    }
+    @Test fun tappingTheHeadlineDropsAndPauseAndBalanceDragsDoNot(){
+        play();val surface=resource("game_surface").visibleBounds
+        device.click(surface.centerX(),surface.top+210);waitScore(1)
+        holdBalance(true);assertEquals(1,score());pause();assertEquals(1,score())
+        device.click(surface.right-20,surface.bottom-30);clock(400);assertEquals(1,score());requireText("RESUME")
+    }
+    @Test fun lowerScreenTapsAreReachableAndRepeatedPressesDoNotDuplicateLandings(){
+        play();val b=resource("game_surface").visibleBounds
+        assertFalse(device.hasObject(By.text("DROP")))
+        repeat(3){device.click(b.right-20,b.bottom-30)};waitScore(1);pause();assertEquals(1,score())
     }
     @Test fun googleCancellationAndFailureKeepGuestPlayAndRecords(){
         flags(mapOf("google_sign_in_enabled" to true));settings();tap("SAVE WITH GOOGLE");account.result="cancel";tap("CONTINUE WITH GOOGLE");requireText("CONTINUE WITH GOOGLE");assertFalse(account.state.value.signedIn)
@@ -188,7 +245,7 @@ class OffBalanceJourneyTest {
         tap("SIGN OUT");requireText("CONTINUE WITH GOOGLE");assertFalse(account.state.value.signedIn);assertEquals(20,BalancePreferences(context).best(Difficulty.STEADY))
     }
     @Test fun signInLinksWithoutAUsernameGateAndNavigationCanReturnToPlay(){
-        flags(mapOf("google_sign_in_enabled" to true));settings();tap("SAVE WITH GOOGLE");tap("CONTINUE WITH GOOGLE");requireText("CONNECTED WITH GOOGLE");tap("DONE");tap("DONE");requireText("PLAY");play();resource("thumb_drop").click();waitScore(1)
+        flags(mapOf("google_sign_in_enabled" to true));settings();tap("SAVE WITH GOOGLE");tap("CONTINUE WITH GOOGLE");requireText("CONNECTED WITH GOOGLE");tap("DONE");tap("DONE");requireText("PLAY");play();drop();waitScore(1)
     }
     @Test fun nativeReviewIsAttemptedOnceAcrossReturnAndActivityRecreation(){
         val gateway=JourneyReview();ReviewGatewayFactory.testGateway=gateway
@@ -223,6 +280,8 @@ class OffBalanceJourneyTest {
             assertFalse(runBlocking{reminders.check(server)})
             reminders.enabled=true
             assertTrue(runBlocking{reminders.check(server,hour=12)})
+            val until=android.os.SystemClock.uptimeMillis()+5_000
+            while(manager.activeNotifications.none{it.id==72} && android.os.SystemClock.uptimeMillis()<until)clock(100)
             val notification=manager.activeNotifications.single{it.id==72}.notification
             assertEquals("rival_one moved ahead",notification.extras.getString(android.app.Notification.EXTRA_TITLE))
             assertFalse(runBlocking{reminders.check(server,hour=12)})

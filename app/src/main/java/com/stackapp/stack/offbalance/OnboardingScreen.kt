@@ -3,22 +3,25 @@ package com.stackapp.stack.offbalance
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.isActive
 import kotlin.math.*
 
-/** A short playable lesson. No account, payment or notification permission gate. */
+/** A playable lesson followed by optional account saving. */
 @Composable fun OnboardingScreen(step:Int,foreground:Boolean,touch:Boolean,tilt:()->Float,
     useTouch:()->Unit,onStep:(Int)->Unit,complete:()->Unit,skip:()->Unit,back:()->Unit,
-    landed:()->Unit,playing:(Boolean)->Unit,balanceBits:Int,saveBalance:(Int)->Unit) {
+    landed:()->Unit,playing:(Boolean)->Unit,balanceBits:Int,saveBalance:(Int)->Unit,
+    account:AccountState=AccountState(),signIn:()->Unit={},useSaved:()->Unit={},cancelSwitch:()->Unit={}) {
     val palette=LocalBalancePalette.current
     val game=remember { BalancePhysics(Difficulty.STEADY,true,trial=0) }
     val frame=remember { mutableStateOf(game.snapshot()) }
@@ -51,7 +54,12 @@ import kotlin.math.*
         }
     }
     DisposableEffect(Unit){onDispose{playing(false)}}
-    BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal=20.dp,vertical=8.dp).testTag("onboarding")) {
+    fun dropPractice(){if(step==0 && !started && !landComplete && game.drop())started=true}
+    BoxWithConstraints(Modifier.fillMaxSize().pointerInput(step,started,landComplete){
+        detectTapGestures{dropPractice()}
+    }.semantics{
+        if(step==0 && !landComplete){contentDescription="Drop practice block";onClick{dropPractice();true}}
+    }.padding(horizontal=20.dp,vertical=8.dp).testTag("onboarding")) {
         val wide=maxWidth>=650.dp
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){
@@ -63,10 +71,10 @@ import kotlin.math.*
                 repeat(3){i->Box(Modifier.weight(1f).height(4.dp).background(if(i<=step)palette.accent else palette.ink.copy(alpha=.2f)))}
             }
             Spacer(Modifier.height(18.dp))
-            val title=when(step){0->"LAND IT";1->"BALANCE";else->"YOU'RE IN"}
-            val hint=when(step){0->if(landComplete)"ONE DOWN. THAT'S THE FEELING." else "TAP DROP. WATCH IT LAND."
+            val title=when(step){0->"LAND IT";1->"BALANCE";else->if(account.configured && !account.signedIn)"MAKE IT YOURS" else "YOU'RE IN"}
+            val hint=when(step){0->if(landComplete)"ONE DOWN. THAT'S THE FEELING." else "TAP ANYWHERE. WATCH IT LAND."
                 1->if(touch)"DRAG LEFT. THEN RIGHT." else "LOWER YOUR LEFT EDGE. THEN YOUR RIGHT."
-                else->"START WITH FIVE. SEE HOW HIGH YOU GO."}
+                else->if(account.signedIn)"SAVED WITH GOOGLE. READY WHEN YOU ARE." else if(account.configured)"SAVE YOUR RECORDS. TAKE ON YOUR FRIENDS." else "START WITH FIVE. SEE HOW HIGH YOU GO."}
             if(wide)Row(Modifier.weight(1f).fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                 Column(Modifier.weight(1f).padding(end=24.dp)){MovingPoster(title,size=110);Spacer(Modifier.height(16.dp));Utility(hint,size=12)}
                 LessonTower(step,frame,landComplete,input,Modifier.weight(1f).fillMaxHeight())
@@ -77,9 +85,7 @@ import kotlin.math.*
             when(step){
                 0 -> {
                     if(landComplete)Action("NEXT"){onStep(1)}
-                    else PressSurface(Modifier.fillMaxWidth().height(88.dp).background(palette.primary),"Drop practice block",{
-                        if(!started && game.drop()){started=true}
-                    },enabled=!started,pressFeedback=false){PosterFit(if(started)"LANDING" else "DROP",Modifier.align(Alignment.Center).padding(14.dp),palette.background,maxSize=58)}
+                    else Spacer(Modifier.height(24.dp))
                 }
                 1 -> {
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Utility(if(heldLeft)"✓ LEFT" else "← LEFT",size=11);Utility(if(heldRight)"RIGHT ✓" else "RIGHT →",size=11)}
@@ -89,8 +95,19 @@ import kotlin.math.*
                     if(!touch)PressSurface(Modifier.fillMaxWidth().height(48.dp),onClick=useTouch){Utility("USE TOUCH INSTEAD",Modifier.align(Alignment.Center),size=10)}
                 }
                 else -> {
-                    Utility("FIRST TARGET / 5 LAYERS",Modifier.fillMaxWidth().padding(vertical=14.dp),align=TextAlign.Center,size=11)
-                    Action("LET'S STACK",Modifier.testTag("onboarding_finish"),onClick=complete)
+                    if(account.message.isNotBlank())Utility(account.message,Modifier.fillMaxWidth().padding(vertical=8.dp),align=TextAlign.Center,size=11)
+                    when {
+                        account.busy -> Utility("CONNECTING…",Modifier.fillMaxWidth().padding(vertical=18.dp),align=TextAlign.Center)
+                        account.savedProfile -> {Action("USE SAVED PROFILE",onClick=useSaved);LinkRow("CANCEL",cancelSwitch)}
+                        account.configured && !account.signedIn -> {
+                            Action("CONTINUE WITH GOOGLE",onClick=signIn)
+                            LinkRow("PLAY AS GUEST",complete)
+                        }
+                        else -> {
+                            Utility("FIRST TARGET / 5 LAYERS",Modifier.fillMaxWidth().padding(vertical=14.dp),align=TextAlign.Center,size=11)
+                            Action("LET'S STACK",Modifier.testTag("onboarding_finish"),onClick=complete)
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))

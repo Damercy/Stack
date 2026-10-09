@@ -6,6 +6,60 @@ import numpy as np
 RATE = 22050
 ROOT = Path(__file__).resolve().parents[1] / 'app/src/main/res/raw'
 
+def midnight_signal():
+    """Original minor-key analogue sequence with a soft heartbeat and long synth bed."""
+    bpm = 96
+    beat = 60 / bpm
+    n = round(beat * 32 * RATE)
+    music = np.zeros(n)
+    rhythm = np.zeros(n)
+    def add(sound, start, target=music):
+        np.add.at(target, (round(start * RATE) + np.arange(len(sound))) % n, sound)
+    def synth(midi, duration, gain, pad=False):
+        t = np.arange(round(duration * RATE)) / RATE
+        f = 440 * 2 ** ((midi - 69) / 12)
+        phase = 2 * np.pi * f * t
+        if pad:
+            signal = .5*np.sin(phase*.9987) + .5*np.sin(phase*1.0013) + .13*np.sin(phase*2)
+            env = np.minimum(1,t/.22) * np.minimum(1,(duration-t)/.35)
+        else:
+            # Smooth harmonic roll-off avoids bright percussion-like transients.
+            signal = sum(np.sin(phase*k)*np.exp(-k*(.25+t*3))/k for k in range(1,9))
+            env = np.minimum(1,t/.012)*np.minimum(1,(duration-t)/.09)*(.16+.84*np.exp(-t/.19))
+        return signal * env * gain
+    roots = (50,46,43,45)
+    steps = (0,7,14,10,3,12,7,17,14,3,10,7,12,5,17,10)
+    for section,root in enumerate(roots):
+        start = section * 8 * beat
+        chord = (0,3,7,14) if section != 3 else (0,5,7,10)
+        for interval in chord:
+            add(synth(root+interval,beat*8.6,.065,True),start)
+        for tick in range(32):
+            when = start + tick * beat / 4
+            tone = synth(root+12+steps[(tick+section*3)%16],beat*.62,.21)
+            add(tone,when)
+            add(tone*.18,when+beat*.75)
+            add(tone*.075,when+beat*1.5)
+        for b in range(8):
+            add(synth(root-12,beat*1.2,.19),start+b*beat)
+            t = np.arange(round(RATE*.24))/RATE
+            pulse = np.sin(2*np.pi*(43*t+26*.035*(1-np.exp(-t/.035)))) * np.exp(-t/.09)*.075
+            add(pulse,start+b*beat,rhythm)
+            if b % 2 == 0:add(pulse*.3,start+(b+.625)*beat,rhythm)
+    rms = np.sqrt(np.mean(music**2))
+    drum_rms = np.sqrt(np.mean(rhythm**2))
+    if drum_rms > rms*.3:rhythm *= rms*.3/drum_rms
+    mix = music + rhythm
+    mix -= mix.mean()
+    fade = round(RATE*.005)
+    mix[:fade] *= np.linspace(0,1,fade)
+    mix[-fade:] *= np.linspace(1,0,fade)
+    mix *= .78/np.max(np.abs(mix))
+    with wave.open(str(ROOT/'groove_0.wav'),'wb') as out:
+        out.setnchannels(1);out.setsampwidth(2);out.setframerate(RATE)
+        out.writeframes((mix*32767).astype('<i2').tobytes())
+    print(f'0: Midnight Signal, {bpm} BPM, {n/RATE:.2f}s, original notes and synthesis')
+
 def loop(index, bpm):
     beat = 60 / bpm
     n = round(beat * 32 * RATE)
@@ -81,4 +135,6 @@ def loop(index, bpm):
 
 if __name__ == '__main__':
     ROOT.mkdir(parents=True,exist_ok=True)
-    for i,bpm in enumerate((104,112,120,108,116,124)): loop(i,bpm)
+    midnight_signal()
+    for i,bpm in enumerate((104,112,120,108,116,124)):
+        if i:loop(i,bpm)

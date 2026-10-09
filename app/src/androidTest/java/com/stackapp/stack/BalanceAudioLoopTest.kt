@@ -19,6 +19,7 @@ class BalanceAudioLoopTest {
         val introduced=prefs.getBoolean("introduced",false)
         prefs.edit().putBoolean("introduced",true).commit()
         val scenario=ActivityScenario.launch(MainActivity::class.java)
+        scenario.onActivity{it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
         var audio:BalanceAudio?=null
         fun main(block:()->Unit)=instrumentation.runOnMainSync(block)
         fun position():Int {var position=0;main{position=audio!!.playbackPosition};return position}
@@ -29,7 +30,7 @@ class BalanceAudioLoopTest {
                 val deadline=android.os.SystemClock.uptimeMillis()+10_000
                 while(position()==0 && android.os.SystemClock.uptimeMillis()<deadline)android.os.SystemClock.sleep(50)
                 assertTrue("Groove $track must start",position()>0)
-                android.os.SystemClock.sleep(20_000) // Longest buffer is 18.46 seconds.
+                android.os.SystemClock.sleep(21_000) // Beyond the longest 20-second buffer.
                 val before=position();android.os.SystemClock.sleep(250)
                 assertNotEquals("Groove $track ended at its first loop",before,position())
                 main{audio!!.update(track,.2f,false)}

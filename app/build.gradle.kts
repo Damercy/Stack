@@ -6,7 +6,7 @@ plugins {
 
 import java.util.Properties
 
-if (file("google-services.json").exists()) {
+if (file("google-services.json").exists() && !providers.gradleProperty("stack.testApplicationIdSuffix").isPresent) {
     apply(plugin = "com.google.gms.google-services")
 }
 
@@ -34,8 +34,8 @@ android {
         applicationId = "com.stackapp.stack"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Deliberately off until provider onboarding and purchase verification are complete.
@@ -54,9 +54,11 @@ android {
     }
 
     buildFeatures { buildConfig = true }
+    testBuildType = providers.gradleProperty("stack.testBuildType").orElse("debug").get()
 
     buildTypes {
         debug {
+            applicationIdSuffix = providers.gradleProperty("stack.testApplicationIdSuffix").orNull
             buildConfigField("boolean", "USE_FIREBASE", providers.gradleProperty("stack.firebaseDebug").orElse("false").get())
             manifestPlaceholders["analyticsCollectionEnabled"] = "false"
         }
@@ -72,6 +74,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+        create("liveTest") {
+            initWith(getByName("release"))
+            // Real service configuration and signing, with a complete test runtime.
+            isDebuggable = true
+            isMinifyEnabled = false
+            isShrinkResources = false
+            matchingFallbacks += listOf("release")
+            manifestPlaceholders["analyticsCollectionEnabled"] = "false"
         }
     }
 }

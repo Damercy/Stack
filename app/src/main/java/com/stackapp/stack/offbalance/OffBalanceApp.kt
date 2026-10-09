@@ -10,12 +10,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.onSizeChanged
@@ -40,6 +42,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
     val accountState by account.state.collectAsState()
     val remote=remember{BalanceRemoteConfig(context)}
     val config by remote.state.collectAsState()
+    val configUpdate by remote.updateRevision.collectAsState()
     val store=remember{StylePackFactory.create(context)}
     val pack by store.state.collectAsState()
     var skin by remember{mutableStateOf(prefs.skin)}
@@ -129,7 +132,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
             foreground && navigation.last()==current && reward==null && !showOffer && (current!=Screen.PLAY || down || won)
         }
     }
-    LaunchedEffect(current,foreground,config){if(foreground && current!=Screen.PLAY){remote.boundary();store.sync(config);reminders.sync()}}
+    LaunchedEffect(current,foreground,config,configUpdate,onboardingStep){if(foreground && current!=Screen.PLAY){remote.boundary();store.sync(config);reminders.sync()}}
     DisposableEffect(Unit){onDispose{remote.close();store.close();account.close()}}
     val sensorActive=foreground && (current==Screen.ONBOARDING && onboardingStep==1 || current==Screen.PLAY && !paused && !down && !won)
     val running=current==Screen.PLAY && sensorActive && started
@@ -231,7 +234,8 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         tilt={tilt.value},useTouch={touch=true;prefs.touch=true;analytics.event("tutorial_touch_selected",difficulty)},
                         onStep={next->if(next==onboardingStep+1){analytics.tutorial("tutorial_step_complete",onboardingStep,onboardingReplay);onboardingStep=next;prefs.onboardingStep=next;tilt.calibrate()}},
                         complete={finishOnboarding(false)},skip={finishOnboarding(true)},back={back()},
-                        landed={audio.impact(effects);if(vibration)haptic.clink(.55f)},playing={onboardingPlaying=it},balanceBits=prefs.onboardingBalance,saveBalance={prefs.onboardingBalance=it})
+                        landed={audio.impact(effects);if(vibration)haptic.clink(.55f)},playing={onboardingPlaying=it},balanceBits=prefs.onboardingBalance,saveBalance={prefs.onboardingBalance=it},
+                        account=accountState,signIn={(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}},useSaved={scope.launch{account.useSavedProfile()}},cancelSwitch={account.cancelSwitch()})
                     Screen.ACCOUNT -> Page({account.cancelSwitch();back()},footer={
                         if(accountState.message.isNotBlank())Utility(accountState.message,Modifier.padding(vertical=12.dp),size=11)
                         when {
@@ -245,6 +249,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         PosterFit(if(accountState.signedIn)"SAVED" else "YOUR GAME",color=Ink)
                         Spacer(Modifier.height(24.dp))
                         Utility(if(accountState.signedIn)"CONNECTED WITH GOOGLE" else "KEEP YOUR USERNAME AND RECORDS ACROSS DEVICES.",size=11)
+                        if(accountState.signedIn){Spacer(Modifier.height(12.dp));Utility(if(loadingSocial)"LOADING YOUR RECORDS…" else own?.let{"PLAYING AS @${it.username}"} ?: "YOU'RE SIGNED IN. CHOOSE A USERNAME TO COMPETE.",size=11);if(!loadingSocial && own==null)LinkRow("CHOOSE USERNAME"){go(Screen.PROFILE)}}
                         Spacer(Modifier.height(18.dp));TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(200.dp),decorative=true)
                         Utility("Your Google name and email stay off the leaderboard. Choose a public username separately.",size=11)
                         Spacer(Modifier.height(16.dp));Utility("Guest play stays available. Signing out keeps device records here.",size=10)
@@ -304,8 +309,8 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         PosterFit("MUSIC")
                         TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(125.dp),decorative=true)
                         Spacer(Modifier.height(28.dp))
-                        val names=listOf("SIDE A","SIDE B","NIGHT RUN") + if(pack.owned || config.styleDiscovery)listOf("AFTER HOURS","NEON TAPE","LAST LIGHT") else emptyList()
-                        val details=listOf("104 BPM · DREAMY SYNTH","112 BPM · FUNK & KEYS","120 BPM · NEON ARCADE","108 BPM · WARM SYNTH","116 BPM · BRIGHT ARPS","124 BPM · LATE ELECTRO")
+                        val names=listOf("MIDNIGHT SIGNAL","SIDE B","NIGHT RUN") + if(pack.owned || config.styleDiscovery)listOf("AFTER HOURS","NEON TAPE","LAST LIGHT") else emptyList()
+                        val details=listOf("96 BPM · DARK ANALOGUE","112 BPM · FUNK & KEYS","120 BPM · NEON ARCADE","108 BPM · WARM SYNTH","116 BPM · BRIGHT ARPS","124 BPM · LATE ELECTRO")
                         names.forEachIndexed {i,name -> Rule();PressSurface(Modifier.fillMaxWidth().height(86.dp),onClick={if(i>=3 && !pack.owned){go(Screen.STYLE)}else {if(track==i)preview=!preview else {track=i;prefs.track=i;preview=true};autoMusic=false;prefs.autoMusic=false}}){
                             Row(Modifier.fillMaxSize(),verticalAlignment=Alignment.CenterVertically){
                                 Canvas(Modifier.size(16.dp)){if(track==i)drawCircle(Vermilion,6.dp.toPx())};Utility("0${i+1}",Modifier.padding(horizontal=9.dp));Column(Modifier.weight(1f)){Poster(name,color=Ink,size=25);Utility(details[i],size=9)}
@@ -426,7 +431,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
 }
 @Composable private fun SettingRow(label:String,content:@Composable ()->Unit){Row(Modifier.fillMaxWidth().heightIn(min=60.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){Utility(label);content()}}
 @Composable private fun SettingSlider(label:String,value:Float,changed:(Float)->Unit){Spacer(Modifier.height(14.dp));Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Utility(label);Utility("${(value*100).toInt()}%")};BalanceSlider(value,label,changed)}
-@Composable private fun LinkRow(label:String,onClick:()->Unit){PressSurface(Modifier.fillMaxWidth().heightIn(min=56.dp),onClick=onClick){Row(Modifier.fillMaxWidth().align(Alignment.Center),horizontalArrangement=Arrangement.SpaceBetween){Utility(label);Utility("›",size=22)}}}
+@Composable fun LinkRow(label:String,onClick:()->Unit){PressSurface(Modifier.fillMaxWidth().heightIn(min=56.dp),onClick=onClick){Row(Modifier.fillMaxWidth().align(Alignment.Center),horizontalArrangement=Arrangement.SpaceBetween){Utility(label);Utility("›",size=22)}}}
 @Composable private fun Selection(selected:Boolean){
     val palette=LocalBalancePalette.current
     val Sun=palette.background;val Cobalt=palette.primary;val Vermilion=palette.accent;val Ink=palette.ink;val Cream=palette.paper
@@ -493,10 +498,13 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
             recovered=frame.recovered;hold=frame.holdSeconds.toInt();changed(frame)
         }
     }
-    BoxWithConstraints(Modifier.fillMaxSize().background(Sun).padding(horizontal=20.dp,vertical=8.dp)) {
+    val latestDrop by rememberUpdatedState(drop)
+    BoxWithConstraints(Modifier.fillMaxSize().background(Sun).pointerInput(paused,down,won){
+        detectTapGestures{if(!paused && !down && !won && frameState.value.canDrop)latestDrop()}
+    }.testTag("game_surface").padding(horizontal=20.dp,vertical=8.dp)) {
         val wide=maxWidth>=650.dp
         val availableWidth=maxWidth
-        val headline=when {down->"DOWN.";won->"NICE.";trial==1->"ROUND";trial>=0->"HOLD";score==0->"TAP";abs(lean)>.26f->"EASY";recovered->"HOLD";else->"STACK"}
+        val headline=when {down->"DOWN.";won->"NICE.";trial==1->"ROUND";trial>=0->"HOLD";abs(lean)>.26f->"EASY";recovered->"HOLD";else->"STACK"}
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth().semantics{contentDescription="Run: $score layers, ${when{down->"over";won->"complete";paused->"paused";else->"playing"}}"}.testTag("run_status"),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){Utility("OFF BALANCE",color=Ink,size=9);Utility(if(trial>=0)"TRIAL 0${trial+1}" else if(score>0)layerLabel(score) else "");Symbol(if(paused||down||won)"Close" else "Pause",onClick=if(down||won)home else if(paused)resume else pause)}
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -505,14 +513,14 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
                         MovingPoster(if(paused)"PAUSE" else headline,size=130)
                         Utility(if(paused)"" else if(down)"" else instruction(score,touch,trial,lean,recovered),Modifier.fillMaxWidth(),align=TextAlign.Center)
                         Spacer(Modifier.weight(1f))
-                        if(!paused && !down && !won)ThumbControls(frameState,lean,touch,balance,drop)
+                        if(!paused && !down && !won)ThumbControls(lean,touch,balance)
                         RunActions(paused,down,won,trial,hold,score,touch,tutorial,resume,reset,home,toggleMusic,musicOn,settings,useTouch,nextTrial,offer,style,invite,friends,record)
                     }
                     key(game){PlayCanvas(frameState,Modifier.weight(1.1f).fillMaxHeight(),paused,drop,won)}
                 } else {
                     MovingPoster(if(paused)"PAUSE" else headline,Modifier.align(Alignment.TopCenter),size=(availableWidth.value*.45f).toInt())
                     key(game){PlayCanvas(frameState,Modifier.fillMaxSize().padding(top=availableWidth*.45f+8.dp,bottom=if(paused||down||won)100.dp else 74.dp),paused,drop,won)}
-                    if(!paused && !down && !won)Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally){Utility(instruction(score,touch,trial,lean,recovered),align=TextAlign.Center,size=10);ThumbControls(frameState,lean,touch,balance,drop)}
+                    if(!paused && !down && !won)Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally){Utility(instruction(score,touch,trial,lean,recovered),align=TextAlign.Center,size=10);ThumbControls(lean,touch,balance)}
                 }
             }
             if(!wide)RunActions(paused,down,won,trial,hold,score,touch,tutorial,resume,reset,home,toggleMusic,musicOn,settings,useTouch,nextTrial,offer,style,invite,friends,record)
@@ -523,14 +531,9 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
     // This small scope alone observes the 60 Hz frame, keeping navigation and text idle.
     PressSurface(modifier.testTag("game_scene"),if(complete)"Completed tower" else "Drop the next piece",{if(!paused && !complete && frame.value.canDrop)drop()},enabled=!paused && !complete,pressFeedback=false){key(frame){TowerDrawing({if(complete)frame.value.copy(incoming=null) else frame.value},Modifier.fillMaxSize(),if(paused).17f else 1f)}}
 }
-@Composable private fun ThumbControls(frame:State<BalanceFrame>,lean:Float,touch:Boolean,balance:(Float)->Unit,drop:()->Unit){
-    val ready by remember(frame){derivedStateOf{frame.value.canDrop}}
-    val palette=LocalBalancePalette.current
-    Row(Modifier.fillMaxWidth().height(98.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)){
-        BalanceGauge(lean,Modifier.weight(1f),touch,balance)
-        PressSurface(Modifier.weight(1f).height(80.dp).background(if(ready)palette.primary else palette.ink.copy(alpha=.15f)).testTag("thumb_drop"),"Drop block",drop,enabled=ready,pressFeedback=false){
-            PosterFit(if(ready)"DROP" else "LANDING",Modifier.align(Alignment.Center).padding(horizontal=8.dp),if(ready)palette.background else palette.ink,maxSize=46)
-        }
+@Composable private fun ThumbControls(lean:Float,touch:Boolean,balance:(Float)->Unit){
+    Box(Modifier.fillMaxWidth().height(98.dp),contentAlignment=Alignment.Center){
+        BalanceGauge(lean,Modifier.widthIn(max=260.dp).testTag("balance_control"),touch,balance)
     }
 }
 private fun instruction(score:Int,touch:Boolean,trial:Int,lean:Float,recovered:Boolean)=when {

@@ -7,6 +7,8 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.google.android.libraries.identity.googleid.*
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.*
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Source
 import com.stackapp.stack.BuildConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -46,31 +48,45 @@ private class GoogleBalanceAccount(context:Context):BalanceAccount {
     }
     init{auth?.addAuthStateListener(listener)}
     override fun configure(enabled:Boolean){state.value=state.value.copy(configured=enabled && auth!=null && clientId.endsWith(".apps.googleusercontent.com"))}
+    private fun signedIn(){
+        // Linking a guest keeps its UID, so an auth-state notification alone is insufficient.
+        state.value=state.value.copy(signedIn=auth?.currentUser?.isAnonymous==false,savedProfile=false,message="")
+        analytics.commerce("login_complete","google")
+    }
     override suspend fun signIn(activity:Activity){
         if(!state.value.configured || state.value.busy || state.value.signedIn)return
         state.value=state.value.copy(busy=true,message="",savedProfile=false);saved=null
         analytics.commerce("login_started","google")
         try {
-            val option=GetGoogleIdOption.Builder().setServerClientId(clientId).setFilterByAuthorizedAccounts(false).setAutoSelectEnabled(false).setNonce(UUID.randomUUID().toString()).build()
+            val option=GetSignInWithGoogleOption.Builder(clientId).setNonce(UUID.randomUUID().toString()).build()
             val response=credentials.getCredential(activity,GetCredentialRequest.Builder().addCredentialOption(option).build()).credential
             check(response is CustomCredential && response.type==GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL)
             val token=GoogleIdTokenCredential.createFrom(response.data).idToken
             val credential=GoogleAuthProvider.getCredential(token,null)
             withTimeout(20_000){
-                val user=auth!!.currentUser ?: auth.signInAnonymously().await().user!!
-                try{user.linkWithCredential(credential).await();analytics.commerce("login_complete","google")}
-                catch(collision:FirebaseAuthUserCollisionException){saved=credential;state.value=state.value.copy(savedProfile=true,message="This Google account has a saved profile. Switching keeps your device records and uses its saved username.")}
+                val user=GuestIdentity.user(auth!!)
+                try{user.linkWithCredential(credential).await();signedIn()}
+                catch(collision:FirebaseAuthUserCollisionException){
+                    // A new guest with no public profile has nothing to abandon: finish the login.
+                    val guestHasProfile=try{FirebaseFirestore.getInstance().collection("players").document(user.uid).get(Source.SERVER).await().exists()}
+                        catch(cancelled:CancellationException){throw cancelled}catch(_:Exception){true}
+                    if(!guestHasProfile){auth.signInWithCredential(credential).await();signedIn()}
+                    else {saved=credential;state.value=state.value.copy(savedProfile=true,message="This Google account has a saved profile. Switching keeps your device records and uses its saved username.")}
+                }
             }
         }catch(_:GetCredentialCancellationException){analytics.commerce("login_cancelled","google")}
         catch(cancelled:CancellationException){if(cancelled !is TimeoutCancellationException)throw cancelled;state.value=state.value.copy(message="Couldn’t connect. Try again.")}
-        catch(_:Exception){state.value=state.value.copy(message="Couldn’t sign in. Try again.");analytics.commerce("login_failed","google")}
+        catch(error:Exception){
+            android.util.Log.w("BalanceAccount", "Sign-in failed: ${if(error is FirebaseAuthException)error.errorCode else error.javaClass.simpleName}")
+            state.value=state.value.copy(message="Couldn’t sign in. Try again.");analytics.commerce("login_failed","google")
+        }
         finally{state.value=state.value.copy(busy=false)}
     }
     override suspend fun useSavedProfile(){
         val credential=saved ?: return
         if(state.value.busy)return
         state.value=state.value.copy(busy=true,message="")
-        try{withTimeout(20_000){auth!!.signInWithCredential(credential).await()};saved=null;state.value=state.value.copy(savedProfile=false);analytics.commerce("login_complete","google")}
+        try{withTimeout(20_000){auth!!.signInWithCredential(credential).await()};saved=null;signedIn()}
         catch(cancelled:CancellationException){if(cancelled !is TimeoutCancellationException)throw cancelled;state.value=state.value.copy(message="Couldn’t connect. Try again.")}
         catch(_:Exception){state.value=state.value.copy(message="Couldn’t load your profile. Retry.")}
         finally{state.value=state.value.copy(busy=false)}

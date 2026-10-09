@@ -44,7 +44,7 @@ class OfflineCompetition:CompetitionRepository {
 }
 class CloudCompetition(private val db:FirebaseFirestore=FirebaseFirestore.getInstance(),private val auth:FirebaseAuth=FirebaseAuth.getInstance()):CompetitionRepository {
     override val available=true
-    private suspend fun uid()=auth.currentUser?.uid ?: auth.signInAnonymously().await().user!!.uid
+    private suspend fun uid()=GuestIdentity.user(auth).uid
     private val empty=Difficulty.entries.associate{it.name to 0}
     private fun decode(doc:com.google.firebase.firestore.DocumentSnapshot):Competitor? {
         val name=doc.getString("username")?:return null

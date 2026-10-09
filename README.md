@@ -12,7 +12,7 @@ tilt or a touch control. Built for phones and foldable screens.
 
 <p align="center">
   <img src="media/showcase/home.svg" width="230" alt="Stack home" />
-  <img src="media/showcase/play.svg" width="230" alt="Stack gameplay with a thumb-reachable drop control" />
+  <img src="media/showcase/play.svg" width="230" alt="Stack gameplay with a thumb-reachable balance control" />
   <img src="media/showcase/music.svg" width="230" alt="Choose an original soundtrack" />
 </p>
 
@@ -24,10 +24,11 @@ tilt or a touch control. Built for phones and foldable screens.
 
 ## Play
 
-- Learn landing and balance through a short interactive first run.
+- Learn landing and balance through a short interactive first run, then save with Google or play as a guest.
+- Tap anywhere to land a block; drag the balance control or tilt your device to catch the lean.
 - Start with a forgiving slab tower; progress to mixed shapes and faster movement.
 - Keep separate records across three difficulties and four practice trials.
-- Choose three free soundtracks, with distinct synth, keys, and arcade arrangements.
+- Start with Midnight Signal, an original dark analogue synth loop, or choose keys and arcade arrangements.
 - Search a friend's username, save them, and compare records.
 - Save an online profile with optional Google sign-in; guest play stays available.
 - Enable play and rival reminders when you want them.
@@ -74,10 +75,12 @@ For a signed release, configure `keystore.properties` using
 Device journeys cover onboarding, rapid taps, falls and replay, backgrounding,
 rotation, audio focus, username search, purchase gating, and account/review flows.
 Account and purchase journeys use controlled responses and do not create public
-test players. Use an emulator for the complete suite:
+test players. A separate QA application can exercise the journeys on a phone
+without replacing the installed game or its Google session:
 
 ```powershell
-.\gradlew.bat connectedDebugAndroidTest
+$env:ANDROID_SERIAL = "<serial>"
+.\gradlew.bat connectedDebugAndroidTest '-Pstack.testApplicationIdSuffix=.qa'
 firebase emulators:exec --only firestore --project demo-off-balance "node firebase/tests/rules.test.mjs"
 npm --prefix firebase/functions test
 python scripts/check_public_source.py
@@ -85,6 +88,13 @@ python scripts/check_public_source.py
 
 Tests verify behavior; emulator results do not establish real-device frame rate,
 battery use, or temperature. Check those on physical devices before a store release.
+
+`PhysicalServiceTest` provides opt-in authenticated service checks. Run it against
+a configured, signed `liveTest` build with `stack.testBuildType=liveTest` and the runner
+arguments `class=com.stackapp.stack.PhysicalServiceTest` and `liveServices=true`.
+Sign in first. These checks refresh authentication, require App Check, verify the
+closed store response, and reject an invalid receipt without making a purchase.
+The live test build keeps the test runtime intact and is never a store artifact.
 
 ### Online services
 

@@ -6,6 +6,7 @@ import com.google.firebase.remoteconfig.*
 import com.stackapp.stack.BuildConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 
@@ -52,6 +53,7 @@ class BalanceRemoteConfig(context:Context) {
     private val owner=SupervisorJob()
     private val scope=CoroutineScope(owner+Dispatchers.IO)
     val state=MutableStateFlow(cached(context))
+    val updateRevision=MutableStateFlow(0)
     private val remote=if(BuildConfig.USE_FIREBASE && runCatching{FirebaseApp.getInstance()}.isSuccess)FirebaseRemoteConfig.getInstance() else null
     private var listener:ConfigUpdateListenerRegistration?=null
     @Volatile private var pending=false
@@ -63,10 +65,10 @@ class BalanceRemoteConfig(context:Context) {
                 remote.setConfigSettingsAsync(FirebaseRemoteConfigSettings.Builder().setMinimumFetchIntervalInSeconds(43_200).setFetchTimeoutInSeconds(8).build()).await()
                 remote.activate().await();publish()
                 listener=remote.addOnConfigUpdateListener(object:ConfigUpdateListener {
-                    override fun onUpdate(update:ConfigUpdate){pending=true}
+                    override fun onUpdate(update:ConfigUpdate){pending=true;updateRevision.update{it+1}}
                     override fun onError(error:FirebaseRemoteConfigException)=Unit
                 })
-                remote.fetch().await();pending=true
+                remote.fetch().await();pending=true;updateRevision.update{it+1}
             }catch(cancelled:CancellationException){throw cancelled}catch(_:Exception){ /* Offline defaults remain usable. */ }
         }
     }

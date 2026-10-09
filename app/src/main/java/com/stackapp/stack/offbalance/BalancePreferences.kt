@@ -57,7 +57,7 @@ class BalancePreferences(context: Context) {
         get()=prefs.getLong("offer_shown",0)
         set(v){prefs.edit().putLong("offer_shown",v).apply()}
     var autoMusic: Boolean
-        get()=prefs.getBoolean("auto_music",true)
+        get()=prefs.getBoolean("auto_music",false)
         set(v){prefs.edit().putBoolean("auto_music",v).apply()}
     var trialsComplete: Int
         get()=prefs.getInt("trials",0)
