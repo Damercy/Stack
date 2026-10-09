@@ -88,7 +88,8 @@ class CloudCompetition(private val db:FirebaseFirestore=FirebaseFirestore.getIns
     override suspend fun remove(){
         val id=uid();val ref=db.collection("players").document(id)
         db.runTransaction{tx->val current=tx.get(ref);current.getString("key")?.let{tx.delete(db.collection("handles").document(it))};tx.delete(ref)}.await()
-        auth.currentUser?.delete()?.await()
+        // Removing the public profile does not revoke the optional Google login.
+        if(auth.currentUser?.isAnonymous==true)auth.currentUser?.delete()?.await()
     }
 }
 class RivalStore(context:Context) {

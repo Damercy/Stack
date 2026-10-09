@@ -24,12 +24,10 @@ class BalanceTilt(context: Context) : SensorEventListener {
     override fun onSensorChanged(event: SensorEvent) {
         @Suppress("DEPRECATION") val rotation=windows?.defaultDisplay?.rotation?:Surface.ROTATION_0
         if(rotation!=lastRotation){lastRotation=rotation;hasSample=false;calibrateNext=true}
-        val x=when(rotation){Surface.ROTATION_90 -> -event.values[1];Surface.ROTATION_180 -> -event.values[0];Surface.ROTATION_270 -> event.values[1];else ->event.values[0]}
-        val angle=asin((x/9.81f).coerceIn(-1f,1f))
+        val angle=TiltMapping.angle(event.values[0],event.values[1],rotation)
         filtered=if(hasSample)filtered*.88f+angle*.12f else angle;hasSample=true
         if(calibrateNext){neutral=filtered;calibrateNext=false}
-        val delta=filtered-neutral
-        value=if(abs(delta)<.025f)0f else (delta-sign(delta)*.025f)/.24f
+        value=TiltMapping.input(filtered,neutral)
     }
     override fun onAccuracyChanged(sensor:Sensor?,accuracy:Int)=Unit
 }

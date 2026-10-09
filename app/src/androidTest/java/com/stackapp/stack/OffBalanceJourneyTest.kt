@@ -27,6 +27,8 @@ class OffBalanceJourneyTest {
     private lateinit var pack:JourneyStylePack
     private lateinit var original:Map<String,Map<String,*>>
     private var originalName=""
+    private val events=java.util.concurrent.CopyOnWriteArrayList<ProductEvent>()
+    private lateinit var account:JourneyAccount
     @Before fun launch(){
         android.util.Log.i("BalanceJourney","setup")
         Configurator.getInstance().waitForIdleTimeout=0
@@ -39,13 +41,16 @@ class OffBalanceJourneyTest {
         context.getSharedPreferences("style_pack",Context.MODE_PRIVATE).edit().clear().commit()
         server=JourneyServer();CompetitionFactory.testRepository=server
         pack=JourneyStylePack();StylePackFactory.testStore=pack
-        scenario=ActivityScenario.launch(MainActivity::class.java)
+        account=JourneyAccount();BalanceAccountFactory.testAccount=account
+        BalanceAnalyticsTestSink.accept={events.add(it)}
+        events.clear();scenario=ActivityScenario.launch(MainActivity::class.java)
         requireText("PLAY")
         android.util.Log.i("BalanceJourney","ready")
     }
     @After fun restore(){
         device.pressHome()
         scenario.close();CompetitionFactory.testRepository=null;StylePackFactory.testStore=null
+        BalanceAccountFactory.testAccount=null;ReviewGatewayFactory.testGateway=null;BalanceAnalyticsTestSink.accept=null
         original.forEach{(name,values)->val e=context.getSharedPreferences(name,Context.MODE_PRIVATE).edit().clear()
             values.forEach{(k,v)->when(v){is String->e.putString(k,v);is Boolean->e.putBoolean(k,v);is Int->e.putInt(k,v);is Long->e.putLong(k,v);is Float->e.putFloat(k,v);is Set<*>->{@Suppress("UNCHECKED_CAST") e.putStringSet(k,v as Set<String>)}}};e.commit()}
         RoomTapStore(context).saveDisplayName(originalName)
@@ -79,6 +84,15 @@ class OffBalanceJourneyTest {
     private fun friends(){tap("TODAY");tap("FRIENDS");resource("username_search")}
     private fun settings(){described("Settings").click();requireText("SETTINGS")}
     private fun clock(ms:Long){android.os.SystemClock.sleep(ms)}
+    private fun holdBalance(left:Boolean){
+        val b=(device.wait(Until.findObject(By.descStartsWith("Balance ")),10_000)?:error("Missing balance control")).visibleBounds
+        val start=android.os.SystemClock.uptimeMillis()
+        fun pointer(action:Int,x:Int){val e=android.view.MotionEvent.obtain(start,android.os.SystemClock.uptimeMillis(),action,x.toFloat(),b.centerY().toFloat(),0);e.source=android.view.InputDevice.SOURCE_TOUCHSCREEN;InstrumentationRegistry.getInstrumentation().uiAutomation.injectInputEvent(e,true);e.recycle()}
+        val edge=if(left)b.left+2 else b.right-2
+        pointer(android.view.MotionEvent.ACTION_DOWN,b.centerX());pointer(android.view.MotionEvent.ACTION_MOVE,edge)
+        try{clock(600)}finally{pointer(android.view.MotionEvent.ACTION_UP,edge)}
+    }
+    private fun freshLesson(){scenario.close();context.getSharedPreferences("off_balance",Context.MODE_PRIVATE).edit().putBoolean("introduced",false).putInt("onboarding_step",0).putInt("onboarding_balance",0).commit();scenario=ActivityScenario.launch(MainActivity::class.java);requireText("LAND IT")}
 
     @Test fun doubleTapDoesNotDuplicateTheFirstLanding(){
         play();clock(300);val bounds=resource("game_scene").visibleBounds
@@ -141,10 +155,51 @@ class OffBalanceJourneyTest {
     }
     @Test fun rapidSearchChangesNeverShowOldResults(){friends();val field=resource("username_search");field.text="rival";field.text="absent";requireText("No players found.");assertFalse(device.hasObject(By.text("@rival_one")))}
     @Test fun missingServerDoesNotShowInventedScores(){server.offline=true;friends();requireText("Couldn’t connect. Try again.");assertFalse(device.hasObject(By.text("@rival_one")));assertFalse(device.hasObject(By.text("12")))}
-    @Test fun freshInstallStartsWithPlayAndNoNameOrPaymentGate(){
-        scenario.close();context.getSharedPreferences("off_balance",Context.MODE_PRIVATE).edit().putBoolean("introduced",false).commit();scenario=ActivityScenario.launch(MainActivity::class.java)
-        resource("game_scene");assertFalse(device.hasObject(By.text("SAVE")));drop();waitScore(1);pause();tap("END RUN");requireText("PLAY")
+    @Test fun freshInstallTeachesLandingAndBalanceThenStartsAnUngatedRun(){
+        freshLesson();assertFalse(device.hasObject(By.text("CONTINUE WITH GOOGLE")));assertFalse(device.hasObject(By.textStartsWith("UNLOCK")))
+        described("Drop practice block").click();tap("NEXT");requireText("BALANCE");holdBalance(true);requireText("✓ LEFT");holdBalance(false);requireText("RIGHT ✓");tap("NEXT");requireText("YOU'RE IN");tap("LET'S STACK")
+        resource("thumb_drop").click();waitScore(1);pause();tap("END RUN");requireText("PLAY")
         assertTrue(context.getSharedPreferences("off_balance",Context.MODE_PRIVATE).getBoolean("introduced",false))
+        assertEquals(1,events.count{it.name=="tutorial_complete"});assertEquals(2,events.count{it.name=="tutorial_step_complete"});assertEquals(1,events.count{it.name=="tower_run_start"});assertEquals(1,events.count{it.name=="tower_run_end"})
+        assertTrue(events.all{event->event.fields.keys.none{it in setOf("username","email","token","uid")}})
+    }
+    @Test fun interruptedPracticeCanRestartAndResumePersistedBalanceProgress(){
+        freshLesson();described("Drop practice block").click();scenario.recreate();requireText("LAND IT")
+        if(!device.hasObject(By.text("NEXT")))described("Drop practice block").click()
+        tap("NEXT");requireText("BALANCE");holdBalance(true);requireText("✓ LEFT");scenario.recreate();requireText("BALANCE");requireText("✓ LEFT");holdBalance(false);tap("NEXT");requireText("YOU'RE IN")
+        device.pressBack();requireText("BALANCE");requireText("RIGHT ✓");tap("NEXT");tap("LET'S STACK");waitScore(0)
+    }
+    @Test fun backgroundingALessonStopsAudioAndSkipStaysDismissed(){
+        freshLesson();described("Drop practice block").click();device.pressHome();clock(1200);assertFalse(context.getSystemService(AudioManager::class.java).isMusicActive)
+        context.startActivity(context.packageManager.getLaunchIntentForPackage(context.packageName)!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));requireText("LAND IT");described("Skip lesson").click();requireText("PLAY");scenario.recreate();requireText("PLAY");assertFalse(device.hasObject(By.text("LAND IT")));assertEquals(1,events.count{it.name=="tutorial_skip"})
+    }
+    @Test fun thumbDropIsReachableAndRepeatedPressesDoNotDuplicateLandings(){
+        play();val b=resource("thumb_drop").visibleBounds;assertTrue(b.centerY()>device.displayHeight*.72f)
+        repeat(3){device.click(b.centerX(),b.centerY())};waitScore(1);pause();assertEquals(1,score())
+    }
+    @Test fun googleCancellationAndFailureKeepGuestPlayAndRecords(){
+        flags(mapOf("google_sign_in_enabled" to true));settings();tap("SAVE WITH GOOGLE");account.result="cancel";tap("CONTINUE WITH GOOGLE");requireText("CONTINUE WITH GOOGLE");assertFalse(account.state.value.signedIn)
+        account.result="fail";tap("CONTINUE WITH GOOGLE");requireText("Couldn’t sign in. Try again.");tap("KEEP PLAYING AS GUEST");tap("DONE");play();drop();waitScore(1)
+    }
+    @Test fun switchingToASavedGoogleProfileRequiresTheCustomChoiceAndCanCancel(){
+        flags(mapOf("google_sign_in_enabled" to true));settings();tap("SAVE WITH GOOGLE");account.result="saved";tap("CONTINUE WITH GOOGLE");requireText("USE SAVED PROFILE");tap("CANCEL");assertFalse(account.state.value.signedIn)
+        server.player=server.player.copy(best=mapOf("STEADY" to 20),daily=mapOf("STEADY" to 3))
+        tap("CONTINUE WITH GOOGLE");tap("USE SAVED PROFILE");requireText("CONNECTED WITH GOOGLE");clock(800);assertEquals(20,BalancePreferences(context).best(Difficulty.STEADY));assertEquals(3,BalancePreferences(context).today(Difficulty.STEADY))
+        tap("SIGN OUT");requireText("CONTINUE WITH GOOGLE");assertFalse(account.state.value.signedIn);assertEquals(20,BalancePreferences(context).best(Difficulty.STEADY))
+    }
+    @Test fun signInLinksWithoutAUsernameGateAndNavigationCanReturnToPlay(){
+        flags(mapOf("google_sign_in_enabled" to true));settings();tap("SAVE WITH GOOGLE");tap("CONTINUE WITH GOOGLE");requireText("CONNECTED WITH GOOGLE");tap("DONE");tap("DONE");requireText("PLAY");play();resource("thumb_drop").click();waitScore(1)
+    }
+    @Test fun nativeReviewIsAttemptedOnceAcrossReturnAndActivityRecreation(){
+        val gateway=JourneyReview();ReviewGatewayFactory.testGateway=gateway
+        scenario.close();context.getSharedPreferences("off_balance",Context.MODE_PRIVATE).edit().putInt("completed_runs",8).putLong("first_played_at",System.currentTimeMillis()-3L*86_400_000).commit();scenario=ActivityScenario.launch(MainActivity::class.java);requireText("PLAY");clock(3000)
+        assertEquals(1,gateway.launches);scenario.recreate();requireText("PLAY");clock(2500);assertEquals(1,gateway.launches);assertTrue(BalancePreferences(context).reviewAttempted)
+    }
+    @Test fun reviewRemoteDisableAndBackgroundRequestCannotPresentACard(){
+        val gateway=JourneyReview();ReviewGatewayFactory.testGateway=gateway
+        scenario.close();context.getSharedPreferences("off_balance",Context.MODE_PRIVATE).edit().putInt("completed_runs",8).putLong("first_played_at",System.currentTimeMillis()-3L*86_400_000).commit();scenario=ActivityScenario.launch(MainActivity::class.java)
+        flags(mapOf("reviews_enabled" to false));clock(2300);assertEquals(0,gateway.launches)
+        gateway.requestDelay=3500;flags(mapOf("reviews_enabled" to true));clock(2000);assertEquals(1,gateway.requests);device.pressHome();clock(4000);assertEquals(0,gateway.launches);assertFalse(BalancePreferences(context).reviewAttempted)
     }
     @Test fun newPlayerCanSaveFriendsBeforeChoosingAUsername(){server.registered=false;friends();resource("username_search").text="rival";described("Follow rival_one").click();resource("username_search").text="";requireText("@rival_one");requireText("SET USERNAME")}
     @Test fun searchRetryAfterNetworkFailureActuallySearchesAgain(){friends();server.offline=true;resource("username_search").text="rival";requireText("Search unavailable. Retry.");server.offline=false;tap("RETRY");requireText("@rival_one")}
@@ -158,7 +213,6 @@ class OffBalanceJourneyTest {
         tap("TRIALS");tap("START TRIAL");requireText("TRIAL 02");drop();requireText("NEXT TRIAL");drop();clock(500);assertEquals(1,score());music("paused");tap("NEXT TRIAL");requireText("TRIAL 03");waitScore(0);drop();waitScore(1);music("playing")
     }
     @Test fun rivalReminderIsOptInDeduplicatedAndOpensFriends(){
-        Assume.assumeTrue(java.time.LocalTime.now().hour in 10..20)
         val reminders=BalanceReminders(context)
         Assume.assumeTrue(reminders.permitted())
         try {
@@ -168,13 +222,13 @@ class OffBalanceJourneyTest {
             prefs.edit().putLong("played",System.currentTimeMillis()-7*60*60*1000L).commit()
             assertFalse(runBlocking{reminders.check(server)})
             reminders.enabled=true
-            assertTrue(runBlocking{reminders.check(server)})
+            assertTrue(runBlocking{reminders.check(server,hour=12)})
             val notification=manager.activeNotifications.single{it.id==72}.notification
             assertEquals("rival_one moved ahead",notification.extras.getString(android.app.Notification.EXTRA_TITLE))
-            assertFalse(runBlocking{reminders.check(server)})
+            assertFalse(runBlocking{reminders.check(server,hour=12)})
             notification.contentIntent.send();resource("username_search")
             reminders.enabled=false
-            assertFalse(runBlocking{reminders.check(server)})
+            assertFalse(runBlocking{reminders.check(server,hour=12)})
         } finally {
             reminders.enabled=false
             context.getSystemService(android.app.NotificationManager::class.java).cancel(72)
@@ -287,7 +341,7 @@ private class JourneyServer:CompetitionRepository {
     @Volatile var offline=false
     @Volatile var registered=true
     @Volatile var rival=Competitor("rival","rival_one",mapOf("STEADY" to 12),competitionDay(),mapOf("STEADY" to 8))
-    private var player=Competitor("me","player_one",emptyMap(),competitionDay(),emptyMap())
+    var player=Competitor("me","player_one",emptyMap(),competitionDay(),emptyMap())
     private fun check(){if(offline)throw java.io.IOException("Offline fixture")}
     override suspend fun own():Competitor?{check();return if(registered)player else null}
     override suspend fun claim(name:String):Competitor{check();if(usernameKey(name)=="rival_one")throw NameUnavailable();registered=true;player=player.copy(username=name);return player}
@@ -303,5 +357,22 @@ private class JourneyStylePack:StylePackStore {
     override suspend fun sync(config:BalanceConfig)=Unit
     override fun buy(activity:android.app.Activity,config:BalanceConfig){state.value=state.value.copy(pending=true,message="PAYMENT PENDING")}
     override fun restore(){if(receiptVerified)state.value=state.value.copy(owned=true,pending=false,message="PACK UNLOCKED")}
+    override fun close()=Unit
+}
+
+private class JourneyReview:ReviewGateway {
+    override val available=true
+    @Volatile var requests=0;@Volatile var launches=0;@Volatile var requestDelay=0L
+    override suspend fun request(){requests++;delay(requestDelay)}
+    override suspend fun launch(activity:android.app.Activity){launches++}
+}
+private class JourneyAccount:BalanceAccount {
+    override val state=kotlinx.coroutines.flow.MutableStateFlow(AccountState())
+    var result="success"
+    override fun configure(enabled:Boolean){state.value=state.value.copy(configured=enabled)}
+    override suspend fun signIn(activity:android.app.Activity){state.value=state.value.copy(busy=true,message="");delay(150);state.value=when(result){"cancel"->state.value.copy(busy=false);"fail"->state.value.copy(busy=false,message="Couldn’t sign in. Try again.");"saved"->state.value.copy(busy=false,savedProfile=true);else->state.value.copy(busy=false,signedIn=true)}}
+    override suspend fun useSavedProfile(){state.value=state.value.copy(signedIn=true,savedProfile=false,revision=state.value.revision+1)}
+    override fun cancelSwitch(){state.value=state.value.copy(savedProfile=false,message="")}
+    override suspend fun signOut(){state.value=state.value.copy(signedIn=false,revision=state.value.revision+1)}
     override fun close()=Unit
 }

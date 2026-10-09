@@ -1,6 +1,5 @@
 package com.stackapp.stack.offbalance
 
-import org.jbox2d.collision.shapes.CircleShape
 import org.jbox2d.collision.shapes.PolygonShape
 import org.jbox2d.common.Vec2
 import org.jbox2d.dynamics.*
@@ -36,6 +35,9 @@ class BalancePhysics(val difficulty: Difficulty, val tutorial: Boolean = false, 
     private var nextKind = PieceKind.SLAB
     private var nextX = 0f
     private var active = false
+    private var collapseTime=0f
+    private var settledTicks=0
+    val collapseFinished get()=down && (collapseTime>=8f || collapseTime>=1.2f && settledTicks>=30)
     private val baseWidth = if (tutorial || trial >= 0) 3.4f else difficulty.base
 
     init {
@@ -74,24 +76,30 @@ class BalancePhysics(val difficulty: Difficulty, val tutorial: Boolean = false, 
     private fun step() {
         time += STEP.toFloat()
         if (!active) return
-        if (down) { world.gravity=Vec2(0f,-10f); world.step(STEP.toFloat(),8,4);return }
+        if (down) {
+            world.gravity.set(0f,-10f);world.step(STEP.toFloat(),8,4)
+            collapseTime+=STEP.toFloat()
+            settledTicks=if(bodies.all{(body,_)->body.linearVelocity.lengthSquared()<.015f && abs(body.angularVelocity)<.12f})settledTicks+1 else 0
+            return
+        }
         // Small restoring torque buys recovery time without welding the tower together.
         val angle = beam.angle
         val assist = when {
             trial==2 -> 100f
             tutorial || trial>=0 -> 180f
-            difficulty==Difficulty.STEADY -> 140f
+            difficulty==Difficulty.STEADY -> 300f+min(score,20)*25f
             difficulty==Difficulty.WOBBLY -> 100f
             else -> 80f
         }
-        beam.applyTorque(-angle * assist - beam.angularVelocity * 8f - input * 19f)
-        world.gravity = Vec2(input * 2.8f, -10f)
+        val damping=if(difficulty==Difficulty.STEADY && trial<0)18f else 8f
+        beam.applyTorque(-angle * assist - beam.angularVelocity * damping - input * 19f)
+        world.gravity.set(input * 2.8f, -10f)
         world.step(STEP.toFloat(), 8, 4)
         // A loose piece must end the run even when the beam itself stays upright.
         // Check before scoring: contact with the floor is never a successful landing.
         if (bodies.any { (body, pose) ->
             val relativeAngle=body.angle-beam.angle
-            val halfHeight=if(pose.kind==PieceKind.DISC)pose.width/2 else pose.height/2*abs(cos(relativeAngle))+pose.width/2*abs(sin(relativeAngle))
+            val halfHeight=pose.height/2*abs(cos(relativeAngle))+pose.width/2*abs(sin(relativeAngle))
             val distance=-body.position.x*sin(beam.angle)+body.position.y*cos(beam.angle)
             distance-halfHeight < -.18f || abs(body.position.x) > 5.5f ||
                 (body !== pending && pose.kind != PieceKind.DISC && abs(body.angle) > .9f)
@@ -107,9 +115,10 @@ class BalancePhysics(val difficulty: Difficulty, val tutorial: Boolean = false, 
                 nextKind = when {
                     trial == 0 || tutorial && score < 5 -> PieceKind.SLAB
                     trial == 3 -> when(score%3){1->PieceKind.DISC;2->PieceKind.WEDGE;else->PieceKind.SLAB}
-                    difficulty == Difficulty.STEADY -> if (score % 7 == 6) PieceKind.DISC else PieceKind.SLAB
-                    score % 5 == 3 -> PieceKind.DISC
-                    difficulty == Difficulty.CHAOS && score % 4 == 2 -> PieceKind.WEDGE
+                    difficulty == Difficulty.STEADY -> if (score>=12 && score%10==2) PieceKind.DISC else PieceKind.SLAB
+                    difficulty == Difficulty.WOBBLY && score>=6 && score%8==6 -> PieceKind.DISC
+                    difficulty == Difficulty.CHAOS && score>=8 && score%7==1 -> PieceKind.WEDGE
+                    difficulty == Difficulty.CHAOS && score>=4 && score%7==4 -> PieceKind.DISC
                     else -> PieceKind.SLAB
                 }
             }
@@ -117,12 +126,12 @@ class BalancePhysics(val difficulty: Difficulty, val tutorial: Boolean = false, 
         }
         val range=when {
             trial==0 || tutorial && score<4 -> .45f
-            difficulty==Difficulty.STEADY -> .65f
+            difficulty==Difficulty.STEADY -> .32f+min(score,18)*.018f
             score<4 && difficulty==Difficulty.WOBBLY -> .55f
             difficulty==Difficulty.CHAOS -> 1.15f
             else -> .9f
         }
-        phase += speedMultiplier() * (if (difficulty == Difficulty.CHAOS) 2.2f else 1.55f) * STEP.toFloat()
+        phase += speedMultiplier() * (when(difficulty){Difficulty.CHAOS->1.9f;Difficulty.WOBBLY->1.35f;else->1.05f}) * STEP.toFloat()
         if (!down && pending == null) nextX = sin(phase) * range
         val lean = abs(beam.angle)
         if (lean > .15f) warned = true
@@ -134,21 +143,18 @@ class BalancePhysics(val difficulty: Difficulty, val tutorial: Boolean = false, 
 
     private fun width(kind: PieceKind) = when (kind) {
         PieceKind.SLAB -> if (difficulty == Difficulty.CHAOS && !tutorial) 1.2f else 1.65f
-        PieceKind.DISC -> .86f
-        PieceKind.WEDGE -> 1.35f
+        PieceKind.DISC -> 1f
+        PieceKind.WEDGE -> 1.45f
     }
 
-    private fun top(): Float = bodies.maxOf { (b, p) -> b.position.y + if(p.kind==PieceKind.DISC)p.width/2 else p.height / 2 * abs(cos(b.angle)) + p.width / 2 * abs(sin(b.angle)) }
+    private fun top(): Float = bodies.maxOf { (b, p) -> b.position.y + p.height / 2 * abs(cos(b.angle)) + p.width / 2 * abs(sin(b.angle)) }
     private fun addPiece(x: Float, y: Float, kind: PieceKind, color: Int): Body {
         val width = width(kind)
         val height = if (kind == PieceKind.DISC) .86f else .5f
-        val body = world.createBody(BodyDef().apply { type = BodyType.DYNAMIC; position.set(x,y); angularDamping = .25f; bullet = true })
-        val shape = when (kind) {
-            PieceKind.DISC -> CircleShape().apply { m_radius = width / 2 }
-            PieceKind.WEDGE -> PolygonShape().apply { set(arrayOf(Vec2(-width/2,-height/2), Vec2(width/2,-height/2), Vec2(width/2,height/2)),3) }
-            else -> PolygonShape().apply { setAsBox(width/2,height/2) }
-        }
-        body.createFixture(FixtureDef().apply { this.shape = shape; density = 1.5f; friction = .66f; restitution = .025f })
+        val body = world.createBody(BodyDef().apply { type = BodyType.DYNAMIC; position.set(x,y); angularDamping = .65f; bullet = true })
+        val outline=pieceOutline(kind,width,height)
+        val shape=PolygonShape().apply {set(outline.map{Vec2(it.x,it.y)}.toTypedArray(),outline.size)}
+        body.createFixture(FixtureDef().apply { this.shape = shape; density = 1.5f; friction = .82f; restitution = .015f })
         bodies.add(body to PiecePose(x,y,0f,width,height,kind,listOf(0,2,1)[color%3]))
         return body
     }

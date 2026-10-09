@@ -79,12 +79,12 @@ val LocalBalanceShared=staticCompositionLocalOf<SharedTransitionScope?>{null}
             (fadeOut(tween(90)) + slideOutVertically(tween(120)){-it/4})
     },label="Poster rhythm") { PosterFit(it,Modifier.fillMaxWidth(),maxSize=size) }
 }
-@Composable fun PressSurface(modifier: Modifier = Modifier, description: String? = null, onClick: () -> Unit, interactionSource:MutableInteractionSource?=null, enabled:Boolean=true, content: @Composable BoxScope.() -> Unit) {
+@Composable fun PressSurface(modifier: Modifier = Modifier, description: String? = null, onClick: () -> Unit, interactionSource:MutableInteractionSource?=null, enabled:Boolean=true, pressFeedback:Boolean=true, content: @Composable BoxScope.() -> Unit) {
     val defaultInteraction=remember { MutableInteractionSource() }
     val interaction = interactionSource ?: defaultInteraction
     val pressed by interaction.collectIsPressedAsState()
     val currentDescription by rememberUpdatedState(description)
-    val pressAlpha by animateFloatAsState(if(pressed).72f else 1f,tween(80),label="Press feedback")
+    val pressAlpha by animateFloatAsState(if(pressed && pressFeedback).72f else 1f,tween(80),label="Press feedback")
     Box(modifier.graphicsLayer { alpha=pressAlpha }
         .semantics { role=Role.Button; currentDescription?.let { contentDescription=it } }
         .clickable(enabled=enabled,interactionSource=interaction,indication=null,onClick=onClick),content=content)
@@ -173,9 +173,13 @@ val LocalBalanceShared=staticCompositionLocalOf<SharedTransitionScope?>{null}
 
     Canvas(modifier.fillMaxWidth().height(98.dp).semantics { contentDescription="Balance ${if(abs(lean)<.25f)"centered" else if(lean>0)"right" else "left"}" }
         .pointerInput(touch) { if(touch) detectDragGestures(onDragEnd={onBalance(0f)},onDragCancel={onBalance(0f)}) { c,_ -> c.consume();onBalance(((c.position.x/size.width)-.5f)*2f) } }) {
-        val r=min(size.width*.43f,size.height*.94f);val o=Offset(center.x,size.height)
-        for(i in -10..10) { val a=(i*6-90)*PI/180; val inner=r-(if(i%5==0)12 else 6).dp.toPx(); drawLine(Ink,Offset(o.x+cos(a).toFloat()*inner,o.y+sin(a).toFloat()*inner),Offset(o.x+cos(a).toFloat()*r,o.y+sin(a).toFloat()*r),1.3.dp.toPx()) }
-        rotate(lean*58f,o) { val p=Path().apply {moveTo(o.x-13.dp.toPx(),o.y-r+12.dp.toPx());lineTo(o.x+13.dp.toPx(),o.y-r+12.dp.toPx());lineTo(o.x,o.y);close()};drawPath(p,Cream);drawLine(Vermilion,o,Offset(o.x,o.y-r+9.dp.toPx()),4.dp.toPx()) }
+        val r=min(size.width*.43f,size.height*.83f);val o=Offset(center.x,size.height-10.dp.toPx())
+        drawArc(Ink.copy(alpha=.12f),210f,120f,false,Offset(o.x-r,o.y-r),androidx.compose.ui.geometry.Size(r*2,r*2),style=Stroke(1.dp.toPx()))
+        drawArc(Vermilion.copy(alpha=.3f),258f,24f,false,Offset(o.x-r*.85f,o.y-r*.85f),androidx.compose.ui.geometry.Size(r*1.7f,r*1.7f),style=Stroke(4.dp.toPx()))
+        for(i in -20..20) { val a=(i*3-90)*PI/180; val inner=r-(if(i%10==0)14 else if(i%5==0)9 else 4).dp.toPx(); drawLine(Ink.copy(alpha=if(i%5==0)1f else .5f),Offset(o.x+cos(a).toFloat()*inner,o.y+sin(a).toFloat()*inner),Offset(o.x+cos(a).toFloat()*r,o.y+sin(a).toFloat()*r),if(i%10==0)2.dp.toPx() else 1.dp.toPx()) }
+        drawLine(Ink.copy(alpha=.3f),Offset(o.x-r*.74f,o.y),Offset(o.x+r*.74f,o.y),1.dp.toPx())
+        rotate(lean*58f,o) { val p=Path().apply {moveTo(o.x-6.dp.toPx(),o.y-8.dp.toPx());lineTo(o.x,o.y-r+16.dp.toPx());lineTo(o.x+6.dp.toPx(),o.y-8.dp.toPx());close()};drawPath(p,Vermilion);drawLine(Cream,Offset(o.x,o.y-11.dp.toPx()),Offset(o.x,o.y-r+24.dp.toPx()),1.dp.toPx()) }
+        drawCircle(Ink,7.dp.toPx(),o);drawCircle(Cream,4.dp.toPx(),o);drawCircle(Vermilion,1.5.dp.toPx(),o)
     }
 }
 @Composable fun GrooveWave(modifier:Modifier=Modifier) {
@@ -215,16 +219,15 @@ val LocalBalanceShared=staticCompositionLocalOf<SharedTransitionScope?>{null}
             val c=when(p.color){0->Cream;1->Cobalt;else->Vermilion};val w=p.width*scale;val h=p.height*scale
             val x=base.x+p.x*scale;val y=base.y-p.y*scale; val depth=Offset(scale*.21f,-scale*.17f)
             rotate(-p.angle*180f/PI.toFloat(),Offset(x,y)) {
-                if(p.kind==PieceKind.DISC) {
-                    drawCircle(c.copy(red=c.red*.75f,green=c.green*.75f,blue=c.blue*.75f),w/2,Offset(x+depth.x,y+depth.y))
-                    drawCircle(c,w/2,Offset(x,y));drawCircle(Ink.copy(alpha=.10f),w*.39f,Offset(x,y),style=Stroke(1.dp.toPx()))
-                    drawLine(Ink.copy(alpha=.09f),Offset(x-w*.3f,y-w*.18f),Offset(x+w*.3f,y+w*.18f),1.dp.toPx())
-                } else {
-                    val a=Offset(x-w/2,y-h/2);val b=Offset(x+w/2,y-h/2);val d=Offset(x+w/2,y+h/2);val e=Offset(x-w/2,y+h/2)
-                    val top=if(p.kind==PieceKind.WEDGE)listOf(e,e+depth,b+depth,b) else listOf(a,a+depth,b+depth,b)
-                    polygon(top,Color(c.red*.9f+.1f,c.green*.9f+.1f,c.blue*.9f+.1f))
-                    polygon(listOf(b,b+depth,d+depth,d),Color(c.red*.70f,c.green*.70f,c.blue*.70f))
-                    polygon(if(p.kind==PieceKind.WEDGE)listOf(e,d,b) else listOf(a,b,d,e),c)
+                val front=pieceOutline(p.kind,p.width,p.height).map{Offset(x+it.x*scale,y-it.y*scale)}
+                // Back, visible top/right edges, then the front: identical silhouette to contacts.
+                polygon(front.map{it+depth},Color(c.red*.7f,c.green*.7f,c.blue*.7f))
+                front.indices.forEach{i->val a=front[i];val b=front[(i+1)%front.size]
+                    if(b.x<a.x || b.y<a.y)polygon(listOf(a,a+depth,b+depth,b),if(b.x<a.x)Color(c.red*.9f+.1f,c.green*.9f+.1f,c.blue*.9f+.1f) else Color(c.red*.70f,c.green*.70f,c.blue*.70f))}
+                polygon(front,c)
+                if(p.kind==PieceKind.DISC){
+                    drawLine(Ink.copy(alpha=.16f),Offset(x-w*.35f,y-h*.22f),Offset(x+w*.35f,y-h*.22f),1.dp.toPx())
+                    drawLine(Ink.copy(alpha=.16f),Offset(x-w*.35f,y+h*.22f),Offset(x+w*.35f,y+h*.22f),1.dp.toPx())
                 }
             }
         }

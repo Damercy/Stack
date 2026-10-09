@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
+    "test": "npm run build && node --test tests/stylePack.test.cjs",
     "deploy": "firebase deploy --only functions,firestore"
   },
   "dependencies": {

@@ -121,4 +121,40 @@ class BalancePhysicsTest {
         game.advance(Double.NaN);game.advance(-100.0);val frame=settle(game)
         assertEquals(1,frame.score);assertTrue(frame.pieces.all{it.x.isFinite() && it.y.isFinite()});assertFalse(frame.down)
     }
+    @Test fun easyModeBuildsTwelveSlabsBeforeIntroducingABarrel(){
+        val game=BalancePhysics(Difficulty.STEADY)
+        repeat(12){layer->
+            assertEquals(PieceKind.SLAB,game.snapshot().incoming!!.kind)
+            var ticks=0
+            while(game.snapshot().incoming!=null && abs(game.snapshot().incoming!!.x)>.025f && ticks++<600)game.advance(BalancePhysics.STEP)
+            assertFalse("Layer ${layer+1} fell while waiting",game.snapshot().down)
+            assertTrue(game.drop());val frame=settle(game,1.5)
+            assertFalse("Layer ${layer+1} fell: $frame",frame.down);assertEquals(layer+1,frame.score)
+        }
+        assertEquals(PieceKind.DISC,game.snapshot().incoming!!.kind)
+    }
+    @Test fun mixedTrialShapesCanStackOnTheirActualContactSurfaces(){
+        val game=BalancePhysics(Difficulty.STEADY,trial=3)
+        repeat(4){layer->
+            var ticks=0
+            while(abs(game.snapshot().incoming!!.x)>.015f && ticks++<600)game.advance(BalancePhysics.STEP)
+            assertTrue(game.drop());val frame=settle(game,2.0)
+            assertFalse("Mixed layer ${layer+1} fell",frame.down);assertEquals(layer+1,frame.score)
+        }
+        assertTrue(game.snapshot().pieces.any{it.kind==PieceKind.DISC})
+        assertTrue(game.snapshot().pieces.any{it.kind==PieceKind.WEDGE})
+    }
+    @Test fun collapseRunsUntilSettledOrTheBoundedAnimationLimit(){
+        val game=BalancePhysics(Difficulty.CHAOS);game.drop();settle(game);game.setInput(1f)
+        var ticks=0
+        while(!game.snapshot().down && ticks++<900)game.advance(BalancePhysics.STEP)
+        assertTrue(game.snapshot().down);assertFalse(game.collapseFinished)
+        val failed=game.snapshot();game.advance(.1)
+        assertFalse(game.collapseFinished);assertNotEquals(failed.pieces,game.snapshot().pieces)
+        var collapseTicks=0
+        while(!game.collapseFinished && collapseTicks++<500)game.advance(BalancePhysics.STEP)
+        assertTrue(game.collapseFinished);assertEquals(failed.score,game.snapshot().score);assertFalse(game.drop())
+        val fresh=BalancePhysics(Difficulty.CHAOS)
+        assertEquals(0,fresh.snapshot().score);assertEquals(1,fresh.snapshot().pieces.size);assertFalse(fresh.collapseFinished)
+    }
 }

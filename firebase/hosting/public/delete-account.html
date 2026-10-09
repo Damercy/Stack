@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Delete your Stack account</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#f4efe0;background:#111115;color-scheme:dark}body{margin:0}main{max-width:600px;padding:64px 24px;margin:auto}h1{font-size:clamp(32px,7vw,52px);line-height:1.1}p{line-height:1.65;color:#ccc}button{font:inherit;padding:16px 22px;background:#f2c744;border:0;color:#111115;cursor:pointer;border-radius:6px;margin:8px 8px 8px 0}button:disabled{opacity:.5;cursor:wait}#confirm{background:#e84b2c;color:white}a{color:#f2c744}[hidden]{display:none!important}#status{min-height:48px}small{line-height:1.6;display:block;color:#aaa}
+</style>
+<main>
+<p>STACK / OFF BALANCE</p>
+<h1>Delete your account</h1>
+<p>Sign in with the Google account you connected to Stack. Then confirm deletion of
+your Stack login, public username, and online scores. This does not delete your Google account.</p>
+<p>Device records and settings stay on installed devices until you clear app data.
+Purchase records may be retained for verification, refunds, and fraud prevention.
+Deleting a Stack account does not refund purchases.</p>
+<button id="signin" disabled>Continue with Google</button>
+<div id="choice" hidden><p id="profile"></p><button id="confirm">Delete my Stack account</button><button id="cancel">Cancel</button></div>
+<p id="status" role="status" aria-live="polite">Connecting…</p>
+<small>For a guest profile, use Today → your username → Delete profile in the app.
+Guest records cannot be accessed through a Google account you have never linked.</small>
+<p><a href="/privacy">Privacy policy</a></p>
+</main>
+<script type="module">
+import {initializeApp} from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js';
+import {getAuth,setPersistence,browserSessionPersistence,GoogleAuthProvider,signInWithPopup,signOut,deleteUser} from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js';
+import {getFirestore,doc,getDoc,runTransaction} from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js';
+const sign=document.querySelector('#signin'),choice=document.querySelector('#choice'),confirm=document.querySelector('#confirm'),cancel=document.querySelector('#cancel'),status=document.querySelector('#status'),profile=document.querySelector('#profile');
+let auth,db,busy=false;
+function pending(value){busy=value;sign.disabled=value;confirm.disabled=value;cancel.disabled=value;}
+try{
+  const response=await fetch('/__/firebase/init.json');if(!response.ok)throw Error();
+  const app=initializeApp(await response.json());auth=getAuth(app);db=getFirestore(app);
+  await setPersistence(auth,browserSessionPersistence);await signOut(auth);
+  status.textContent='Sign in to confirm which Stack account to delete.';sign.disabled=false;
+}catch{status.textContent='Couldn’t connect. Reload this page to retry.';}
+sign.onclick=async()=>{
+  if(busy||!auth)return;pending(true);status.textContent='Waiting for Google…';
+  try{
+    const provider=new GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});
+    const {user}=await signInWithPopup(auth,provider);
+    const record=await getDoc(doc(db,'players',user.uid));
+    profile.textContent=record.exists()?`Stack profile: @${record.data().username}`:'This Google account has no public Stack username.';
+    choice.hidden=false;sign.hidden=true;status.textContent='Deletion is permanent. Continue only if this is the account you want to remove.';
+  }catch{status.textContent='Sign-in was cancelled or unavailable. Try again.';}
+  finally{pending(false);}
+};
+cancel.onclick=async()=>{if(busy)return;pending(true);try{await signOut(auth);choice.hidden=true;sign.hidden=false;status.textContent='Cancelled. Your Stack account is unchanged.';}catch{status.textContent='Couldn’t sign out. Close this tab to end this session.';}finally{pending(false);}};
+confirm.onclick=async()=>{
+  if(busy||!auth?.currentUser)return;pending(true);status.textContent='Deleting your Stack account…';
+  try{
+    const user=auth.currentUser,player=doc(db,'players',user.uid);
+    await runTransaction(db,async tx=>{
+      const record=await tx.get(player);if(!record.exists())return;
+      const key=record.data().key;
+      if(typeof key!=='string'||!/^[a-z0-9_]{3,20}$/.test(key))throw Error();
+      const handle=doc(db,'handles',key),reservation=await tx.get(handle);
+      if(reservation.exists()&&reservation.data().owner===user.uid)tx.delete(handle);
+      tx.delete(player);
+    });
+    await deleteUser(user);choice.hidden=true;sign.hidden=true;status.textContent='Your Stack account, public username and online scores have been deleted.';
+  }catch{choice.hidden=true;sign.hidden=false;status.textContent='Couldn’t finish deletion. Sign in again and retry; any removed online records stay removed.';}
+  finally{pending(false);}
+};
+</script>
+</html>

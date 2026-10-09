@@ -10,8 +10,8 @@ data class SceneViewport(val scale: Float, val x: Float, val y: Float) {
             val poses=frame.pieces + frame.beam + listOfNotNull(frame.incoming)
             poses.forEach { p ->
                 val c=abs(cos(p.angle)); val s=abs(sin(p.angle))
-                val dx=(if(p.kind==PieceKind.DISC)p.width/2 else (p.width*c+p.height*s)/2)+.28f
-                val dy=(if(p.kind==PieceKind.DISC)p.width/2 else (p.height*c+p.width*s)/2)+.28f
+                val dx=(p.width*c+p.height*s)/2+.28f
+                val dy=(p.height*c+p.width*s)/2+.28f
                 left=min(left,p.x-dx);right=max(right,p.x+dx);bottom=min(bottom,p.y-dy);top=max(top,p.y+dy)
             }
             val padding=if(decorative).025f else .06f
@@ -36,8 +36,8 @@ class SceneCamera {
         var lowest=-.95f
         fun include(p:PiecePose){
             val c=abs(cos(p.angle));val s=abs(sin(p.angle))
-            val dx=(if(p.kind==PieceKind.DISC)p.width/2 else (p.width*c+p.height*s)/2)+.28f
-            val dy=(if(p.kind==PieceKind.DISC)p.width/2 else (p.height*c+p.width*s)/2)+.28f
+            val dx=(p.width*c+p.height*s)/2+.28f
+            val dy=(p.height*c+p.width*s)/2+.28f
             radius=max(radius,abs(p.x)+dx);highest=max(highest,p.y+dy);lowest=min(lowest,p.y-dy)
         }
         include(frame.beam);frame.pieces.forEach(::include);frame.incoming?.let(::include)

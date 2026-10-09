@@ -31,10 +31,13 @@ import androidx.navigation3.ui.NavDisplay
 import com.stackapp.stack.tap.AndroidHapticEngine
 import kotlinx.coroutines.*
 import kotlin.math.abs
-private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TODAY, RIVALS, PROFILE, COUNTRY, STYLE }
+private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TODAY, RIVALS, PROFILE, COUNTRY, STYLE }
 @Composable fun OffBalanceApp(context:Context, initialName:String?, initialCountry:String, saveName:(String)->Unit, saveCountry:(String)->Unit, onLanding:suspend ()->Unit, openRivalsRequest:Int=0) {
     val prefs=remember { BalancePreferences(context) }
     val analytics=remember{BalanceAnalytics(context)}
+    val review=remember{BalanceReview(context,prefs,analytics)}
+    val account=remember{BalanceAccountFactory.create(context)}
+    val accountState by account.state.collectAsState()
     val remote=remember{BalanceRemoteConfig(context)}
     val config by remote.state.collectAsState()
     val store=remember{StylePackFactory.create(context)}
@@ -74,7 +77,10 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
     var profileBusy by remember{mutableStateOf(false)}
     var confirmDelete by remember{mutableStateOf(false)}
     var difficulty by remember { mutableStateOf(prefs.difficulty) }
-    var tutorial by remember { mutableStateOf(!prefs.introduced) }
+    var tutorial by remember { mutableStateOf(false) }
+    var onboardingStep by remember { mutableIntStateOf(prefs.onboardingStep) }
+    var onboardingPlaying by remember { mutableStateOf(false) }
+    var onboardingReplay by remember { mutableStateOf(false) }
     var trial by remember { mutableIntStateOf(-1) }
     var trialSelected by remember { mutableIntStateOf(prefs.trialsComplete.coerceAtMost(3)) }
     var paused by rememberSaveable { mutableStateOf(false) }
@@ -94,7 +100,7 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
     var started by remember { mutableStateOf(false) }
     var down by remember { mutableStateOf(false) }
     var won by remember { mutableStateOf(false) }
-    val navigation=remember { mutableStateListOf(if(tutorial)Screen.PLAY else Screen.HOME) }
+    val navigation=remember { mutableStateListOf(if(!prefs.introduced)Screen.ONBOARDING else Screen.HOME) }
     val current=navigation.last()
     var game by remember { mutableStateOf(BalancePhysics(difficulty,tutorial,trial)) }
     val frozen=remember { mutableStateOf(game.snapshot()) }
@@ -107,18 +113,35 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
     var recoveryShown by remember{mutableStateOf(false)}
     var offerShown by remember{mutableStateOf(false)}
     val showOffer=(down || won) && offerShown && config.payments && config.verificationReady && pack.ready && !pack.owned
+    LaunchedEffect(config.googleSignIn){account.configure(config.googleSignIn)}
+    LaunchedEffect(accountState.revision,accountState.signedIn){
+        if(accountState.revision>0){own=null;displayName="";saveName("");socialError="";refresh++}
+        if(accountState.signedIn)refresh++
+    }
+    LaunchedEffect(current,down,won,foreground,reward,showOffer,config.reviews,config.reviewMinRuns,config.reviewAgeHours){
+        if(!foreground || reward!=null || showOffer || !prefs.introduced)return@LaunchedEffect
+        val activity=context as? android.app.Activity ?: return@LaunchedEffect
+        val result=current==Screen.PLAY && (down || won)
+        if(!result && current!=Screen.HOME)return@LaunchedEffect
+        if(result && down)while(!game.collapseFinished){delay(100)}
+        delay(if(result)800 else 1_500)
+        review.consider(activity,config,ReviewMoment(newBest,score,prefs.trialsComplete,current==Screen.HOME)){
+            foreground && navigation.last()==current && reward==null && !showOffer && (current!=Screen.PLAY || down || won)
+        }
+    }
     LaunchedEffect(current,foreground,config){if(foreground && current!=Screen.PLAY){remote.boundary();store.sync(config);reminders.sync()}}
-    DisposableEffect(Unit){onDispose{remote.close();store.close()}}
-    val sensorActive=current==Screen.PLAY && !paused && !down && !won && foreground
-    val running=sensorActive && started
+    DisposableEffect(Unit){onDispose{remote.close();store.close();account.close()}}
+    val sensorActive=foreground && (current==Screen.ONBOARDING && onboardingStep==1 || current==Screen.PLAY && !paused && !down && !won)
+    val running=current==Screen.PLAY && sensorActive && started
     val lifecycle=LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(openRivalsRequest){if(openRivalsRequest>0){navigation.clear();navigation.add(Screen.HOME);navigation.add(if(config.friends)Screen.RIVALS else Screen.TODAY)}}
-    LaunchedEffect(current,foreground,down,refresh,followed){
+    LaunchedEffect(current,foreground,down,refresh,followed,accountState.revision,accountState.signedIn){
         if(!config.friends || !foreground || current==Screen.PLAY && !down)return@LaunchedEffect
         if(!social.available)return@LaunchedEffect
         loadingSocial=true;socialError=""
         try {
             own=social.own()
+            own?.let{player->prefs.restoreRecords(player);if(accountState.signedIn){displayName=player.username;saveName(player.username)}}
             if(own!=null){Difficulty.entries.forEach{mode->own=social.publish(mode,prefs.best(mode),prefs.today(mode))}}
             people=social.load(followed)
         } catch(cancelled:CancellationException){throw cancelled}
@@ -144,16 +167,19 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
         onDispose {lifecycle.removeObserver(observer);tilt.stop();audio.close()}
     }
     DisposableEffect(sensorActive,touch) {if(sensorActive && !touch)tilt.start() else tilt.stop();onDispose{tilt.stop()}}
-    LaunchedEffect(track,autoMusic,difficulty,music,current,running,preview,foreground,pack.owned) {
-        audio.update(if(autoMusic && current!=Screen.MUSIC)difficulty.ordinal else if(track<3 || pack.owned)track else 0,music,foreground && (running || current==Screen.MUSIC && preview))
+    LaunchedEffect(track,autoMusic,difficulty,music,current,running,preview,foreground,pack.owned,onboardingPlaying) {
+        audio.update(if(autoMusic && current!=Screen.MUSIC)difficulty.ordinal else if(track<3 || pack.owned)track else 0,music,foreground && (running || current==Screen.MUSIC && preview || current==Screen.ONBOARDING && onboardingPlaying))
     }
     fun go(screen:Screen){if(screen==Screen.STYLE)analytics.event("style_pack_view",difficulty,score);if(screen==Screen.MUSIC && autoMusic)track=difficulty.ordinal;if(navigation.last()!=screen)navigation.add(screen)}
     fun back(){
         preview=false
-        if(navigation.last()==Screen.PLAY){
+        if(navigation.last()==Screen.ONBOARDING){
+            if(onboardingStep>0){onboardingStep--;prefs.onboardingStep=onboardingStep}
+            else {analytics.tutorial("tutorial_skip",onboardingStep,onboardingReplay);prefs.introduced=true;if(onboardingReplay && navigation.size>1){onboardingReplay=false;navigation.removeAt(navigation.lastIndex)}else {navigation.clear();navigation.add(Screen.HOME)}}
+        } else if(navigation.last()==Screen.PLAY){
             if(down || won){paused=false;down=false;won=false;tutorial=false;navigation.clear();navigation.add(Screen.HOME)}
             else {paused=!paused;reward=null}
-        } else if(navigation.size>1)navigation.removeAt(navigation.lastIndex)
+        } else if(navigation.size>1){if(navigation.last()==Screen.ACCOUNT)account.cancelSwitch();navigation.removeAt(navigation.lastIndex)}
     }
     fun start(selectedTrial:Int=-1, first:Boolean=false){
         runConfig=config;runBest=prefs.best(difficulty);runEnded=false;newBest=false;reward=null;recoveryShown=false;offerShown=false
@@ -161,12 +187,22 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
         game=BalancePhysics(difficulty,tutorial,trial);frozen.value=game.snapshot();reminders.played()
         navigation.clear();navigation.add(Screen.HOME);navigation.add(Screen.PLAY);tilt.calibrate()
     }
-    fun home(){if(!runEnded && started){prefs.completedRuns++;runEnded=true};reward=null;paused=false;down=false;won=false;tutorial=false;navigation.clear();navigation.add(Screen.HOME)}
+    fun finishOnboarding(skipped:Boolean){
+        if(navigation.last()!=Screen.ONBOARDING)return
+        analytics.tutorial(if(skipped)"tutorial_skip" else "tutorial_complete",onboardingStep,onboardingReplay)
+        prefs.introduced=true;onboardingPlaying=false
+        if(onboardingReplay){onboardingReplay=false;navigation.removeAt(navigation.lastIndex)} else if(skipped){navigation.clear();navigation.add(Screen.HOME)} else start()
+    }
+    LaunchedEffect(current){
+        analytics.screen(current.name.lowercase())
+        if(current==Screen.ONBOARDING && !prefs.onboardingStarted){prefs.onboardingStarted=true;analytics.tutorial("tutorial_begin",0,false)}
+    }
+    fun home(){if(!runEnded && started){prefs.completedRuns++;runEnded=true;analytics.event("tower_run_end",difficulty,score,"exit")};reward=null;paused=false;down=false;won=false;tutorial=false;navigation.clear();navigation.add(Screen.HOME)}
     fun celebrate(label:String){if(runConfig.celebrations){reward=BalanceReward(++rewardId,label);if(vibration)haptic.celebrate();analytics.event("tower_celebration",difficulty,score)}}
     fun endRun(completed:Boolean){
         if(runEnded)return
         runEnded=true;prefs.completedRuns++
-        analytics.event("tower_run_end",difficulty,score)
+        analytics.event("tower_run_end",difficulty,score,if(completed)"trial_complete" else "fall")
         newBest=trial<0 && score>runBest
         if(completed)celebrate("TRIAL COMPLETE") else if(newBest)celebrate("NEW BEST")
         offerShown=pack.ready && runConfig.offerEligible(prefs.completedRuns,newBest,completed,false,pack.owned,System.currentTimeMillis(),prefs.offerShownAt)
@@ -191,6 +227,29 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
             predictivePopTransitionSpec={ (fadeIn()+slideInHorizontally{-it/6}) togetherWith (fadeOut()+slideOutHorizontally{it/5}) },
             entryProvider={ screen -> NavEntry(screen) {
                 when(screen){
+                    Screen.ONBOARDING -> OnboardingScreen(onboardingStep,current==Screen.ONBOARDING && foreground,touch,
+                        tilt={tilt.value},useTouch={touch=true;prefs.touch=true;analytics.event("tutorial_touch_selected",difficulty)},
+                        onStep={next->if(next==onboardingStep+1){analytics.tutorial("tutorial_step_complete",onboardingStep,onboardingReplay);onboardingStep=next;prefs.onboardingStep=next;tilt.calibrate()}},
+                        complete={finishOnboarding(false)},skip={finishOnboarding(true)},back={back()},
+                        landed={audio.impact(effects);if(vibration)haptic.clink(.55f)},playing={onboardingPlaying=it},balanceBits=prefs.onboardingBalance,saveBalance={prefs.onboardingBalance=it})
+                    Screen.ACCOUNT -> Page({account.cancelSwitch();back()},footer={
+                        if(accountState.message.isNotBlank())Utility(accountState.message,Modifier.padding(vertical=12.dp),size=11)
+                        when {
+                            accountState.busy -> Utility("CONNECTING…",Modifier.padding(vertical=16.dp))
+                            accountState.savedProfile -> {Action("USE SAVED PROFILE"){scope.launch{account.useSavedProfile()}};LinkRow("CANCEL"){account.cancelSwitch()}}
+                            accountState.signedIn -> {Action("DONE"){back()};LinkRow("SIGN OUT"){scope.launch{account.signOut()}};LinkRow("DELETE ACCOUNT"){context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://stack-damercy.web.app/delete-account")))}}
+                            accountState.configured -> {Action("CONTINUE WITH GOOGLE"){(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}};LinkRow("KEEP PLAYING AS GUEST"){back()}}
+                            else -> Action("KEEP PLAYING"){back()}
+                        }
+                    }) {
+                        PosterFit(if(accountState.signedIn)"SAVED" else "YOUR GAME",color=Ink)
+                        Spacer(Modifier.height(24.dp))
+                        Utility(if(accountState.signedIn)"CONNECTED WITH GOOGLE" else "KEEP YOUR USERNAME AND RECORDS ACROSS DEVICES.",size=11)
+                        Spacer(Modifier.height(18.dp));TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(200.dp),decorative=true)
+                        Utility("Your Google name and email stay off the leaderboard. Choose a public username separately.",size=11)
+                        Spacer(Modifier.height(16.dp));Utility("Guest play stays available. Signing out keeps device records here.",size=10)
+                        Spacer(Modifier.weight(1f))
+                    }
                     Screen.HOME -> HomeScreen(difficulty,prefs.best(difficulty),{go(Screen.SETTINGS)},{go(Screen.DIFFICULTY)},{start()},{if(config.trials)go(Screen.TRIALS)},{go(Screen.TODAY)},config.trials)
                     Screen.DIFFICULTY -> Page({back()}) {
                         PosterFit("DIFFICULTY",color=Ink);Spacer(Modifier.height(18.dp))
@@ -218,7 +277,7 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
                     }
                     Screen.PLAY -> PlayScreen(game,frozen,navigation.last()==Screen.PLAY && foreground,navigation.last()==Screen.PLAY && !paused && !down && !won && foreground && started,paused,down,won,tutorial,trial,score,touch,
                         balance={ if(touch)game.setInput(it) },tickInput={if(!touch)game.setInput((tilt.value*(.6f+sensitivity*1.6f)).coerceIn(-1f,1f))},
-                        drop={if(!down && !won && !paused){audio.interaction();if(!started)tilt.calibrate(); if(game.drop()){started=true;if(vibration)haptic.clink(.55f)}}},
+                        drop={if(!down && !won && !paused){audio.interaction();if(!started)tilt.calibrate(); if(game.drop()){if(!started){if(prefs.firstPlayedAt==0L)prefs.firstPlayedAt=System.currentTimeMillis();analytics.event("tower_run_start",difficulty)};started=true;if(vibration)haptic.clink(.55f)}}},
                         frameChanged={frame ->landed(frame.score,frame.recovered,frame.holdSeconds);if(frame.down && !down){down=true;prefs.introduced=true;tutorial=false;endRun(false)}},
                         pause={paused=true;reward=null},resume={tilt.calibrate();paused=false},reset={start(trial,tutorial)},home={prefs.introduced=true;home()},settings={go(Screen.SETTINGS)},
                         toggleMusic={music=if(music>0f)0f else .7f;prefs.music=music},musicOn=music>0f,
@@ -237,6 +296,8 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
                             Row(Modifier.border(1.dp,Ink)) {listOf("TILT","TOUCH").forEachIndexed {i,label -> PressSurface(Modifier.width(70.dp).height(42.dp).background(if(touch==(i==1))Ink else Sun),onClick={touch=i==1 || !tilt.available;prefs.touch=touch}){Utility(label,Modifier.align(Alignment.Center),if(touch==(i==1))Sun else Ink)} } }
                         };Rule();Spacer(Modifier.height(12.dp));Utility("SENSITIVITY");BalanceSlider(sensitivity,"Tilt sensitivity"){sensitivity=it;prefs.sensitivity=it};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Utility("GENTLE",size=9);Utility("SHARP",size=9)};Spacer(Modifier.height(12.dp));Rule()
                         if(pack.owned || config.styleDiscovery || config.offerSettings && config.payments && pack.ready){LinkRow("STYLE PACK"){go(Screen.STYLE)};Rule()}
+                        if(accountState.configured || accountState.signedIn){LinkRow(if(accountState.signedIn)"GOOGLE ACCOUNT" else "SAVE WITH GOOGLE"){go(Screen.ACCOUNT)};Rule()}
+                        LinkRow("HOW TO PLAY"){onboardingReplay=true;onboardingStep=0;prefs.onboardingStep=0;prefs.onboardingBalance=0;analytics.event("tutorial_replay",difficulty);go(Screen.ONBOARDING)};Rule()
                         LinkRow("RESET LEVEL"){start(trial,tutorial)};Rule();LinkRow("PRIVACY"){context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://stack-damercy.web.app/privacy")))};Rule()
                     }
                     Screen.MUSIC -> Page({back()},footer={Action("DONE",Modifier.padding(top=8.dp)){back()}}) {
@@ -244,7 +305,7 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
                         TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(125.dp),decorative=true)
                         Spacer(Modifier.height(28.dp))
                         val names=listOf("SIDE A","SIDE B","NIGHT RUN") + if(pack.owned || config.styleDiscovery)listOf("AFTER HOURS","NEON TAPE","LAST LIGHT") else emptyList()
-                        val details=listOf("104 BPM · SPARSE ELECTRO","112 BPM · BASS & CLAPS","120 BPM · SHARP & FAST","108 BPM · WARM SYNTH","116 BPM · BRIGHT ARPS","124 BPM · LATE ELECTRO")
+                        val details=listOf("104 BPM · DREAMY SYNTH","112 BPM · FUNK & KEYS","120 BPM · NEON ARCADE","108 BPM · WARM SYNTH","116 BPM · BRIGHT ARPS","124 BPM · LATE ELECTRO")
                         names.forEachIndexed {i,name -> Rule();PressSurface(Modifier.fillMaxWidth().height(86.dp),onClick={if(i>=3 && !pack.owned){go(Screen.STYLE)}else {if(track==i)preview=!preview else {track=i;prefs.track=i;preview=true};autoMusic=false;prefs.autoMusic=false}}){
                             Row(Modifier.fillMaxSize(),verticalAlignment=Alignment.CenterVertically){
                                 Canvas(Modifier.size(16.dp)){if(track==i)drawCircle(Vermilion,6.dp.toPx())};Utility("0${i+1}",Modifier.padding(horizontal=9.dp));Column(Modifier.weight(1f)){Poster(name,color=Ink,size=25);Utility(details[i],size=9)}
@@ -254,9 +315,11 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
                         }};Rule();SettingRow("AUTO BY DIFFICULTY"){Switch(autoMusic,"Auto soundtrack"){autoMusic=it;prefs.autoMusic=it}};Utility("You can choose your own groove.",size=10)
                     }
                     Screen.TODAY -> Page({back()}) {
-                        PosterFit("TODAY");Utility("DAILY BEST",Modifier.padding(vertical=16.dp));Rule()
+                        var time by remember{mutableStateOf(competitionTimeLabel())}
+                        LaunchedEffect(foreground){while(foreground){time=competitionTimeLabel();delay(60_000)}}
+                        PosterFit("TODAY");Utility(time.date,Modifier.padding(top=14.dp),size=10);Utility("DAILY BEST",Modifier.padding(vertical=16.dp));Rule()
                         Difficulty.entries.forEach {mode ->SettingRow(mode.title){Utility("${prefs.today(mode)}",size=22)};Rule()}
-                        Spacer(Modifier.height(24.dp));Utility("RESETS AT 00:00 UTC",size=10)
+                        Spacer(Modifier.height(24.dp));Utility(time.reset,size=10)
                         Spacer(Modifier.weight(1f));if(config.friends)Action("FRIENDS"){go(Screen.RIVALS)};LinkRow(if(own==null)"SET USERNAME" else "@${own!!.username}"){go(Screen.PROFILE)}
                     }
                     Screen.RIVALS -> Page({back()}) {
@@ -283,7 +346,9 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
                         Spacer(Modifier.weight(1f));LinkRow("REFRESH"){refresh++};Action("PLAY"){start()}
                     }
                     Screen.PROFILE -> Page({back()}) {
-                        PosterFit("USERNAME",color=Ink);Spacer(Modifier.height(28.dp));Utility("3–20 LETTERS, NUMBERS OR _",size=10)
+                        PosterFit("USERNAME",color=Ink)
+                        if(accountState.configured && !accountState.signedIn)LinkRow("SAVE WITH GOOGLE"){go(Screen.ACCOUNT)}
+                        Spacer(Modifier.height(28.dp));Utility("3–20 LETTERS, NUMBERS OR _",size=10)
                         BasicTextField(displayName,{displayName=it.filter {c->c in 'A'..'Z'||c in 'a'..'z'||c in '0'..'9'||c=='_'}.take(20);profileError=""},Modifier.fillMaxWidth().padding(vertical=18.dp).semantics{contentDescription="Your username"}.testTag("username_entry"),singleLine=true,textStyle=TextStyle(fontFamily=UtilityFont,fontSize=24.sp,color=Ink),cursorBrush=SolidColor(Vermilion),decorationBox={inner->if(displayName.isBlank())Utility("USERNAME",color=Ink.copy(alpha=.35f),size=24);inner()});Rule()
                         Utility(profileError,Modifier.heightIn(min=32.dp),Vermilion);Utility("Your username and scores are public.",size=10);Spacer(Modifier.weight(1f));Action(if(profileBusy)"SAVING…" else "SAVE"){
                             if(!profileBusy)when {
@@ -339,7 +404,7 @@ private enum class Screen { HOME, PLAY, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TOD
     // Gameplay Back opens its pause state; other destinations keep NavDisplay's predictive motion.
     }
     if(current==Screen.PLAY && !paused && foreground)reward?.let{item->CompositionLocalProvider(LocalBalancePalette provides palette){RewardBurst(item,runConfig.celebrationMillis){if(reward?.id==item.id)reward=null}}}
-    BackHandler(current==Screen.PLAY) { back() }
+    BackHandler(current==Screen.PLAY || current==Screen.ONBOARDING) { back() }
 }
 @Composable private fun Page(close:()->Unit, footer:@Composable ()->Unit={}, content:@Composable ColumnScope.()->Unit) {
     val palette=LocalBalancePalette.current
@@ -414,12 +479,11 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
         if(!visible || !running && (!down || paused))return@LaunchedEffect
         var last=withFrameNanos{it}
         var next=last+16_666_667L
-        var collapseFrames=0
         while(isActive){
             val now=withFrameNanos{it}
             if(now+500_000L<next)continue
             next+=16_666_667L;if(next<now)next=now+16_666_667L
-            if(down && collapseFrames++>=75)break
+            if(down && game.collapseFinished)break
             input()
             Trace.beginSection("Balance.Physics")
             val frame=try { game.advance((now-last)/1e9) } finally { Trace.endSection() };last=now
@@ -441,14 +505,14 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
                         MovingPoster(if(paused)"PAUSE" else headline,size=130)
                         Utility(if(paused)"" else if(down)"" else instruction(score,touch,trial,lean,recovered),Modifier.fillMaxWidth(),align=TextAlign.Center)
                         Spacer(Modifier.weight(1f))
-                        if(!paused && !down && !won)BalanceGauge(lean,touch=touch,onBalance=balance)
+                        if(!paused && !down && !won)ThumbControls(frameState,lean,touch,balance,drop)
                         RunActions(paused,down,won,trial,hold,score,touch,tutorial,resume,reset,home,toggleMusic,musicOn,settings,useTouch,nextTrial,offer,style,invite,friends,record)
                     }
                     key(game){PlayCanvas(frameState,Modifier.weight(1.1f).fillMaxHeight(),paused,drop,won)}
                 } else {
                     MovingPoster(if(paused)"PAUSE" else headline,Modifier.align(Alignment.TopCenter),size=(availableWidth.value*.45f).toInt())
                     key(game){PlayCanvas(frameState,Modifier.fillMaxSize().padding(top=availableWidth*.45f+8.dp,bottom=if(paused||down||won)100.dp else 74.dp),paused,drop,won)}
-                    if(!paused && !down && !won)Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally){Utility(instruction(score,touch,trial,lean,recovered),align=TextAlign.Center);BalanceGauge(lean,touch=touch,onBalance=balance)}
+                    if(!paused && !down && !won)Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally){Utility(instruction(score,touch,trial,lean,recovered),align=TextAlign.Center,size=10);ThumbControls(frameState,lean,touch,balance,drop)}
                 }
             }
             if(!wide)RunActions(paused,down,won,trial,hold,score,touch,tutorial,resume,reset,home,toggleMusic,musicOn,settings,useTouch,nextTrial,offer,style,invite,friends,record)
@@ -457,7 +521,17 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
 }
 @Composable private fun PlayCanvas(frame:State<BalanceFrame>,modifier:Modifier,paused:Boolean,drop:()->Unit,complete:Boolean){
     // This small scope alone observes the 60 Hz frame, keeping navigation and text idle.
-    PressSurface(modifier.testTag("game_scene"),if(complete)"Completed tower" else "Drop the next piece",{if(!paused && !complete && frame.value.canDrop)drop()},enabled=!paused && !complete){key(frame){TowerDrawing({if(complete)frame.value.copy(incoming=null) else frame.value},Modifier.fillMaxSize(),if(paused).17f else 1f)}}
+    PressSurface(modifier.testTag("game_scene"),if(complete)"Completed tower" else "Drop the next piece",{if(!paused && !complete && frame.value.canDrop)drop()},enabled=!paused && !complete,pressFeedback=false){key(frame){TowerDrawing({if(complete)frame.value.copy(incoming=null) else frame.value},Modifier.fillMaxSize(),if(paused).17f else 1f)}}
+}
+@Composable private fun ThumbControls(frame:State<BalanceFrame>,lean:Float,touch:Boolean,balance:(Float)->Unit,drop:()->Unit){
+    val ready by remember(frame){derivedStateOf{frame.value.canDrop}}
+    val palette=LocalBalancePalette.current
+    Row(Modifier.fillMaxWidth().height(98.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)){
+        BalanceGauge(lean,Modifier.weight(1f),touch,balance)
+        PressSurface(Modifier.weight(1f).height(80.dp).background(if(ready)palette.primary else palette.ink.copy(alpha=.15f)).testTag("thumb_drop"),"Drop block",drop,enabled=ready,pressFeedback=false){
+            PosterFit(if(ready)"DROP" else "LANDING",Modifier.align(Alignment.Center).padding(horizontal=8.dp),if(ready)palette.background else palette.ink,maxSize=46)
+        }
+    }
 }
 private fun instruction(score:Int,touch:Boolean,trial:Int,lean:Float,recovered:Boolean)=when {
     trial==0->"LAND FIVE SLABS."

@@ -113,6 +113,30 @@
         "value": "true"
       },
       "valueType": "BOOLEAN"
+    },
+    "reviews_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "review_min_runs": {
+      "defaultValue": {
+        "value": "5"
+      },
+      "valueType": "NUMBER"
+    },
+    "review_min_age_hours": {
+      "defaultValue": {
+        "value": "24"
+      },
+      "valueType": "NUMBER"
+    },
+    "google_sign_in_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
     }
   }
 }

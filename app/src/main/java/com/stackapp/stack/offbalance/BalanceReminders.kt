@@ -33,8 +33,7 @@ class BalanceReminders(context:Context) {
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).setRequiresBatteryNotLow(true).build()).build()
         work.enqueueUniquePeriodicWork("balance-reminders",ExistingPeriodicWorkPolicy.KEEP,request)
     }
-    suspend fun check(repository:CompetitionRepository=CompetitionFactory.create()):Boolean {
-        val now=System.currentTimeMillis();val hour=java.time.LocalTime.now().hour
+    suspend fun check(repository:CompetitionRepository=CompetitionFactory.create(),now:Long=System.currentTimeMillis(),hour:Int=java.time.LocalTime.now().hour):Boolean {
         val config=BalanceRemoteConfig.cached(context)
         if(!shouldRemind(ReminderContext(enabled,permitted(),now,prefs.getLong("played",0),prefs.getLong("sent",0),hour),config))return false
         val local=BalancePreferences(context);var title="Your next tower";var message="Best: ${local.best(local.difficulty)}. Play again?"
