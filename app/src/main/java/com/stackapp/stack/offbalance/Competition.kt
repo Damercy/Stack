@@ -25,6 +25,7 @@ interface CompetitionRepository {
     suspend fun publish(mode:Difficulty,best:Int,today:Int):Competitor?
     suspend fun search(prefix:String):List<Competitor>
     suspend fun load(ids:Set<String>):List<Competitor>
+    suspend fun leaders(mode:Difficulty):List<Competitor> = emptyList()
     suspend fun remove()
 }
 object CompetitionFactory {
@@ -85,6 +86,12 @@ class CloudCompetition(private val db:FirebaseFirestore=FirebaseFirestore.getIns
         return db.collection("players").orderBy("key").startAt(key).endAt(key+"\uf8ff").limit(8).get(Source.SERVER).await().documents.mapNotNull(::decode).filter{it.id!=me}
     }
     override suspend fun load(ids:Set<String>):List<Competitor> = ids.take(30).mapNotNull {decode(db.collection("players").document(it).get(Source.SERVER).await())}
+    override suspend fun leaders(mode:Difficulty):List<Competitor> {
+        uid()
+        return db.collection("players").whereEqualTo("day",competitionDay())
+            .whereGreaterThan("daily.${mode.name}",0).orderBy("daily.${mode.name}",com.google.firebase.firestore.Query.Direction.DESCENDING)
+            .orderBy("key").limit(3).get(Source.SERVER).await().documents.mapNotNull(::decode)
+    }
     override suspend fun remove(){
         val id=uid();val ref=db.collection("players").document(id)
         db.runTransaction{tx->val current=tx.get(ref);current.getString("key")?.let{tx.delete(db.collection("handles").document(it))};tx.delete(ref)}.await()

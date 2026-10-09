@@ -121,17 +121,36 @@ class BalancePhysicsTest {
         game.advance(Double.NaN);game.advance(-100.0);val frame=settle(game)
         assertEquals(1,frame.score);assertTrue(frame.pieces.all{it.x.isFinite() && it.y.isFinite()});assertFalse(frame.down)
     }
-    @Test fun easyModeBuildsTwelveSlabsBeforeIntroducingABarrel(){
+    @Test fun steadyModePassesTheOldDifficultyCliffWithSupportedSlabs(){
         val game=BalancePhysics(Difficulty.STEADY)
-        repeat(12){layer->
+        fun balancedFrame():BalanceFrame {
+            return game.advance(BalancePhysics.STEP)
+        }
+        repeat(25){layer->
             assertEquals(PieceKind.SLAB,game.snapshot().incoming!!.kind)
             var ticks=0
-            while(game.snapshot().incoming!=null && abs(game.snapshot().incoming!!.x)>.025f && ticks++<600)game.advance(BalancePhysics.STEP)
+            while(game.snapshot().incoming!=null && abs(game.snapshot().incoming!!.x-game.snapshot().pieces.last().x)>.025f && ticks++<600)balancedFrame()
             assertFalse("Layer ${layer+1} fell while waiting",game.snapshot().down)
-            assertTrue(game.drop());val frame=settle(game,1.5)
+            assertTrue(game.drop())
+            var frame=game.snapshot();var landingTicks=0
+            while(!frame.down && frame.score<layer+1 && landingTicks++<240)frame=balancedFrame()
+            repeat(30){frame=balancedFrame()}
             assertFalse("Layer ${layer+1} fell: $frame",frame.down);assertEquals(layer+1,frame.score)
         }
-        assertEquals(PieceKind.DISC,game.snapshot().incoming!!.kind)
+        assertEquals(PieceKind.SLAB,game.snapshot().incoming!!.kind)
+        assertTrue(game.speedMultiplier()>1f);assertTrue(game.speedMultiplier()<1.25f)
+    }
+    @Test fun steadyRecoveryStillAllowsPhysicalFailureAndAFreshRestart(){
+        val game=BalancePhysics(Difficulty.STEADY)
+        game.drop();settle(game)
+        val field=BalancePhysics::class.java.getDeclaredField("bodies").apply{isAccessible=true}
+        @Suppress("UNCHECKED_CAST") val pieces=field.get(game) as List<Pair<org.jbox2d.dynamics.Body,PiecePose>>
+        pieces.last().first.setTransform(org.jbox2d.common.Vec2(6f,0f),1f)
+        val failed=settle(game,.1)
+        assertTrue(failed.down);assertFalse(game.drop())
+        assertEquals(failed.score,settle(game,3.0).score)
+        val fresh=BalancePhysics(Difficulty.STEADY).snapshot()
+        assertFalse(fresh.down);assertEquals(0,fresh.score);assertEquals(1,fresh.pieces.size)
     }
     @Test fun mixedTrialShapesCanStackOnTheirActualContactSurfaces(){
         val game=BalancePhysics(Difficulty.STEADY,trial=3)

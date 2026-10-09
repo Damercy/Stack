@@ -35,7 +35,7 @@ import kotlin.math.*
     val latestLanded by rememberUpdatedState(landed)
     val latestSave by rememberUpdatedState(saveBalance)
     LaunchedEffect(step,foreground,started,landComplete) {
-        playing(step==0 && foreground && started && !landComplete)
+        playing(false)
         if(!foreground || step==2 || step==0 && (!started || landComplete))return@LaunchedEffect
         var last=withFrameNanos{it}
         var leftTime=0f;var rightTime=0f
@@ -71,7 +71,6 @@ import kotlin.math.*
                 repeat(3){i->Box(Modifier.weight(1f).height(4.dp).background(if(i<=step)palette.accent else palette.ink.copy(alpha=.2f)))}
             }
             Spacer(Modifier.height(18.dp))
-            if(step<2 && account.signedIn){AccountIdentityCard(account,username);Spacer(Modifier.height(12.dp))}
             val title=when(step){0->"LAND IT";1->"BALANCE";else->if(account.configured && !account.signedIn)"MAKE IT YOURS" else "YOU'RE IN"}
             val hint=when(step){0->if(landComplete)"ONE DOWN. THAT'S THE FEELING." else "TAP ANYWHERE. WATCH IT LAND."
                 1->if(touch)"DRAG LEFT. THEN RIGHT." else "LOWER YOUR LEFT EDGE. THEN YOUR RIGHT."

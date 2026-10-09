@@ -123,6 +123,65 @@ class OffBalanceJourneyTest {
     }
     private fun freshLesson(){scenario.close();context.getSharedPreferences("off_balance",Context.MODE_PRIVATE).edit().putBoolean("introduced",false).putInt("onboarding_step",0).putInt("onboarding_balance",0).commit();scenario=ActivityScenario.launch(MainActivity::class.java);requireText("LAND IT")}
 
+    @Test fun profileIsOnlyVisibleInFinalLessonAndSavedAccount(){
+        flags(mapOf("google_sign_in_enabled" to true))
+        account.state.value=account.state.value.copy(signedIn=true,name="Demo Player",email="player@example.org")
+        freshLesson();assertFalse(device.hasObject(By.res("google_identity")))
+        described("Drop practice block").click();tap("NEXT");music("paused")
+        assertFalse(device.hasObject(By.res("google_identity")))
+        holdBalance(true);holdBalance(false);tap("NEXT");resource("google_identity");requireText("Demo Player")
+        device.pressBack();requireText("BALANCE");assertFalse(device.hasObject(By.res("google_identity")))
+        tap("NEXT");resource("google_identity");scenario.recreate();resource("google_identity")
+        described("Skip lesson").click();requireText("PLAY");assertFalse(device.hasObject(By.res("google_identity")))
+        settings();tap("GOOGLE ACCOUNT");resource("google_identity");assertFalse(device.hasObject(By.text("DONE")))
+        device.pressBack();requireText("SETTINGS");assertFalse(device.hasObject(By.res("google_identity")))
+    }
+    @Test fun firstOnboardingLandingIsSilent(){
+        freshLesson();music("paused");described("Drop practice block").click();tap("NEXT");music("paused")
+        assertFalse(context.getSystemService(AudioManager::class.java).isMusicActive)
+    }
+    @Test fun automaticSettingsAndMusicSaveUseBackWithoutDone(){
+        settings();assertFalse(device.hasObject(By.text("DONE")))
+        tap("SOUNDTRACK \u203a");assertFalse(device.hasObject(By.text("DONE")))
+        tap("NIGHT RUN");music("playing");device.pressBack();requireText("SETTINGS");music("paused")
+        assertEquals(2,BalancePreferences(context).track)
+        device.pressBack();requireText("PLAY")
+    }
+    @Test fun dailyPodiumRanksThreeAndHandlesEmptyOfflineAndModeChange(){
+        fun player(id:String,score:Int,day:String=competitionDay())=Competitor(id,id,emptyMap(),day,mapOf("STEADY" to score))
+        server.dailyLeaders=listOf(player("third",8),player("first",25),player("second",14),player("fourth",2),player("old_day",100,"2000-01-01"))
+        tap("TODAY");resource("daily_rank_1");requireText("@first");requireText("@second");requireText("@third")
+        assertFalse(device.hasObject(By.text("@fourth")));assertFalse(device.hasObject(By.text("@old_day")))
+        assertTrue(requireText("@first").visibleBounds.top<requireText("@second").visibleBounds.top)
+        described("Leaderboard WOBBLY").click();requireText("First tower takes the lead.")
+        server.offline=true;described("Leaderboard STEADY").click();requireText("Couldn\u2019t load today\u2019s leaders.")
+        server.offline=false;tap("RETRY");requireText("@first")
+    }
+    @Test fun homeStyleNudgeCanDismissAndCannotRepeatAfterRestartOrOwnership(){
+        BalancePreferences(context).completedRuns=3
+        pack.state.value=StylePackState(ready=true,price="US$4.99")
+        flags(mapOf("payments_enabled" to true,"payment_verification_ready" to true,"offer_home_enabled" to true))
+        described("Explore Style Pack");described("Dismiss Style Pack offer").click()
+        scenario.recreate();requireText("PLAY");assertFalse(device.hasObject(By.desc("Explore Style Pack")))
+        BalancePreferences(context).offerShownAt=0
+        scenario.recreate();requireText("PLAY");described("Explore Style Pack").click();requireText("YOUR STYLE")
+        assertFalse(device.hasObject(By.text("DONE")))
+        pack.state.value=pack.state.value.copy(owned=true)
+        device.pressBack();requireText("PLAY");assertFalse(device.hasObject(By.desc("Explore Style Pack")))
+        requireText("YOUR STYLE")
+    }
+    @Test fun paidMusicPreviewExpiresAndCannotBecomeTheGameplayTrack(){
+        flags(mapOf("style_pack_discovery_enabled" to true))
+        settings();tap("SOUNDTRACK \u203a");tap("AFTER HOURS");music("playing")
+        requireText("15 SECOND PREVIEW · STYLE PACK");requireText("KEEP THIS GROOVE")
+        clock(16_000);music("paused")
+        assertEquals(0,BalancePreferences(context).track);assertFalse(pack.state.value.owned)
+        tap("KEEP THIS GROOVE");requireText("YOUR STYLE");music("paused")
+        device.pressBack();requireText("MUSIC");music("paused")
+        device.pressBack();requireText("SETTINGS");device.pressBack();play();drop();waitScore(1);music("playing")
+        assertEquals(0,BalancePreferences(context).track);assertFalse(pack.state.value.owned)
+    }
+
     @Test fun doubleTapDoesNotDuplicateTheFirstLanding(){
         play();clock(300);val bounds=resource("game_scene").visibleBounds
         repeat(2){
@@ -165,10 +224,10 @@ class OffBalanceJourneyTest {
     @Test fun muteAndUnmuteWhilePausedDoNotResetTheTower(){
         play();drop();waitScore(1);pause();tap("SETTINGS")
         val margin=(6*context.resources.displayMetrics.density).toInt()
-        val slider=described("MUSIC").visibleBounds;device.click(slider.left+margin,slider.centerY());requireText("0%");tap("DONE");tap("RESUME");assertTrue(device.wait(Until.hasObject(By.desc("Run: 1 layers, playing")),10_000));music("paused");assertEquals(1,score())
-        pause();tap("SETTINGS");val s=described("MUSIC").visibleBounds;device.click(s.right-margin,s.centerY());requireText("100%");tap("DONE");tap("RESUME");music("playing");assertEquals(1,score())
+        val slider=described("MUSIC").visibleBounds;device.click(slider.left+margin,slider.centerY());requireText("0%");device.pressBack();tap("RESUME");assertTrue(device.wait(Until.hasObject(By.desc("Run: 1 layers, playing")),10_000));music("paused");assertEquals(1,score())
+        pause();tap("SETTINGS");val s=described("MUSIC").visibleBounds;device.click(s.right-margin,s.centerY());requireText("100%");device.pressBack();tap("RESUME");music("playing");assertEquals(1,score())
     }
-    @Test fun switchingPreviewTracksThenLeavingStopsThePreview(){settings();tap("SOUNDTRACK ›");tap("MIDNIGHT SIGNAL");music("playing");tap("NIGHT RUN");music("playing");tap("SIDE B");music("playing");tap("DONE");music("paused");tap("DONE");requireText("PLAY")}
+    @Test fun switchingPreviewTracksThenLeavingStopsThePreview(){settings();tap("SOUNDTRACK ›");tap("MIDNIGHT SIGNAL");music("playing");tap("NIGHT RUN");music("playing");tap("SIDE B");music("playing");device.pressBack();music("paused");device.pressBack();requireText("PLAY")}
     @Test fun rotationPreservesAnActiveTowerAndKeepsPauseReachable(){
         play();drop();waitScore(1);device.setOrientationLeft()
         val until=android.os.SystemClock.uptimeMillis()+5_000
@@ -236,7 +295,7 @@ class OffBalanceJourneyTest {
     }
     @Test fun googleCancellationAndFailureKeepGuestPlayAndRecords(){
         flags(mapOf("google_sign_in_enabled" to true));settings();tap("SAVE WITH GOOGLE");account.result="cancel";tap("CONTINUE WITH GOOGLE");requireText("CONTINUE WITH GOOGLE");assertFalse(account.state.value.signedIn)
-        account.result="fail";tap("CONTINUE WITH GOOGLE");requireText("Couldn’t sign in. Try again.");tap("KEEP PLAYING AS GUEST");tap("DONE");play();drop();waitScore(1)
+        account.result="fail";tap("CONTINUE WITH GOOGLE");requireText("Couldn’t sign in. Try again.");tap("KEEP PLAYING AS GUEST");device.pressBack();play();drop();waitScore(1)
     }
     @Test fun switchingToASavedGoogleProfileRequiresTheCustomChoiceAndCanCancel(){
         flags(mapOf("google_sign_in_enabled" to true));settings();tap("SAVE WITH GOOGLE");account.result="saved";tap("CONTINUE WITH GOOGLE");requireText("USE SAVED PROFILE");tap("CANCEL");assertFalse(account.state.value.signedIn)
@@ -245,7 +304,7 @@ class OffBalanceJourneyTest {
         tap("SIGN OUT");requireText("CONTINUE WITH GOOGLE");assertFalse(account.state.value.signedIn);assertEquals(20,BalancePreferences(context).best(Difficulty.STEADY))
     }
     @Test fun signInLinksWithoutAUsernameGateAndNavigationCanReturnToPlay(){
-        flags(mapOf("google_sign_in_enabled" to true));settings();tap("SAVE WITH GOOGLE");tap("CONTINUE WITH GOOGLE");requireText("CONNECTED WITH GOOGLE");tap("DONE");tap("DONE");requireText("PLAY");play();drop();waitScore(1)
+        flags(mapOf("google_sign_in_enabled" to true));settings();tap("SAVE WITH GOOGLE");tap("CONTINUE WITH GOOGLE");requireText("CONNECTED WITH GOOGLE");device.pressBack();device.pressBack();requireText("PLAY");play();drop();waitScore(1)
     }
     @Test fun nativeReviewIsAttemptedOnceAcrossReturnAndActivityRecreation(){
         val gateway=JourneyReview();ReviewGatewayFactory.testGateway=gateway
@@ -300,7 +359,7 @@ class OffBalanceJourneyTest {
     }
     @Test fun previewMusicLoopsAndLeavingStopsIt(){
         settings();tap("SOUNDTRACK ›");tap("SIDE B");music("playing");clock(22_000);music("playing")
-        assertTrue(context.getSystemService(AudioManager::class.java).isMusicActive);tap("DONE");music("paused")
+        assertTrue(context.getSystemService(AudioManager::class.java).isMusicActive);device.pressBack();music("paused")
     }
     @Test fun remoteDiscoveryDoesNotPermitPaymentWithoutServerReadiness(){
         pack.state.value=StylePackState(ready=true,price="₹99")
@@ -316,12 +375,12 @@ class OffBalanceJourneyTest {
         described("Theme MINT").click();assertEquals(BalanceSkin.GOLD,BalancePreferences(context).skin)
         pack.receiptVerified=true;tap("RESTORE PURCHASES");requireText("PACK UNLOCKED")
         described("Theme MINT").click();assertEquals(BalanceSkin.MINT,BalancePreferences(context).skin)
-        tap("DONE");tap("SOUNDTRACK ›");tap("AFTER HOURS");music("playing")
+        device.pressBack();tap("SOUNDTRACK ›");tap("AFTER HOURS");music("playing")
     }
     @Test fun disablingSalesPreservesOwnedThemesAndMusic(){
         pack.state.value=StylePackState(owned=true)
         flags(emptyMap());settings();tap("STYLE PACK");described("Theme NIGHT").click()
-        assertEquals(BalanceSkin.NIGHT,BalancePreferences(context).skin);tap("DONE");tap("SOUNDTRACK ›");tap("LAST LIGHT");music("playing")
+        assertEquals(BalanceSkin.NIGHT,BalancePreferences(context).skin);device.pressBack();tap("SOUNDTRACK ›");tap("LAST LIGHT");music("playing")
         assertFalse(device.hasObject(By.textStartsWith("UNLOCK")))
     }
     @Test fun remoteSwitchesCanHideTrialsAndFriendsWithoutBlockingPlay(){
@@ -400,6 +459,7 @@ private class JourneyServer:CompetitionRepository {
     @Volatile var offline=false
     @Volatile var registered=true
     @Volatile var rival=Competitor("rival","rival_one",mapOf("STEADY" to 12),competitionDay(),mapOf("STEADY" to 8))
+    var dailyLeaders=listOf(rival)
     var player=Competitor("me","player_one",emptyMap(),competitionDay(),emptyMap())
     private fun check(){if(offline)throw java.io.IOException("Offline fixture")}
     override suspend fun own():Competitor?{check();return if(registered)player else null}
@@ -407,6 +467,7 @@ private class JourneyServer:CompetitionRepository {
     override suspend fun publish(mode:Difficulty,best:Int,today:Int):Competitor?{check();if(!registered)return null;player=player.copy(best=player.best+(mode.name to best),daily=player.daily+(mode.name to today));return player}
     override suspend fun search(prefix:String):List<Competitor>{delay(80);check();return listOf(rival).filter{usernameKey(it.username).startsWith(usernameKey(prefix))}}
     override suspend fun load(ids:Set<String>):List<Competitor>{check();return listOf(rival).filter{it.id in ids}}
+    override suspend fun leaders(mode:Difficulty):List<Competitor>{check();return dailyLeaders.filter{it.day==competitionDay() && it.score(mode,true)>0}.sortedWith(compareByDescending<Competitor>{it.score(mode,true)}.thenBy{usernameKey(it.username)}).take(3)}
     override suspend fun remove(){check();registered=false}
 }
 

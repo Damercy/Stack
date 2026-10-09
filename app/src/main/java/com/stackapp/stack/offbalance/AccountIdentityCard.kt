@@ -1,6 +1,8 @@
 package com.stackapp.stack.offbalance
 
 import android.graphics.BitmapFactory
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,6 +14,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -22,11 +26,14 @@ import java.net.URI
 /** Private account details; public competition uses only the chosen username. */
 @Composable fun AccountIdentityCard(account:AccountState,username:String?,modifier:Modifier=Modifier) {
     val palette=LocalBalancePalette.current
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit){entered=true}
+    val reveal by animateFloatAsState(if(entered)1f else 0f,tween(240),label="account reveal")
     val photo by produceState<ImageBitmap?>(null,account.photoUrl) {
         value=null
         if(account.photoUrl.isNotBlank())value=withContext(Dispatchers.IO){loadProfilePhoto(account.photoUrl)}
     }
-    Column(modifier.fillMaxWidth().border(2.dp,palette.ink).background(palette.paper).padding(16.dp)) {
+    Column(modifier.fillMaxWidth().testTag("google_identity").graphicsLayer{alpha=reveal;translationY=(1f-reveal)*8.dp.toPx()}.border(2.dp,palette.ink).background(palette.paper).padding(16.dp)) {
         Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)) {
             Box(Modifier.size(64.dp).clip(CircleShape).background(palette.primary),contentAlignment=Alignment.Center) {
                 val image=photo

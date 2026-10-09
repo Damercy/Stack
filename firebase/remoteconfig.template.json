@@ -137,6 +137,12 @@
         "value": "true"
       },
       "valueType": "BOOLEAN"
+    },
+    "offer_home_enabled": {
+      "defaultValue": {
+        "value": "false"
+      },
+      "valueType": "BOOLEAN"
     }
   }
 }

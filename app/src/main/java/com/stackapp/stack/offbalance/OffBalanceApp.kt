@@ -75,6 +75,10 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
     var socialError by remember{mutableStateOf("")}
     var loadingSocial by remember{mutableStateOf(false)}
     var searching by remember{mutableStateOf(false)}
+    var leaders by remember{mutableStateOf(emptyList<Competitor>())}
+    var leadersLoading by remember{mutableStateOf(false)}
+    var leadersError by remember{mutableStateOf("")}
+    var leaderboardDay by remember{mutableStateOf(competitionDay())}
     var searchError by remember{mutableStateOf("")}
     var refresh by remember{mutableIntStateOf(0)}
     var profileBusy by remember{mutableStateOf(false)}
@@ -105,6 +109,10 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
     var won by remember { mutableStateOf(false) }
     val navigation=remember { mutableStateListOf(if(!prefs.introduced)Screen.ONBOARDING else Screen.HOME) }
     val current=navigation.last()
+    LaunchedEffect(current,foreground,preview,track,pack.owned){
+        if(current==Screen.MUSIC && foreground && preview && track>=3 && !pack.owned){delay(15_000);preview=false}
+        if(current!=Screen.MUSIC && !pack.owned && track>=3){preview=false;track=prefs.track.coerceIn(0,2)}
+    }
     var game by remember { mutableStateOf(BalancePhysics(difficulty,tutorial,trial)) }
     val frozen=remember { mutableStateOf(game.snapshot()) }
     var runConfig by remember{mutableStateOf(config)}
@@ -115,6 +123,14 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
     var rewardId by remember{mutableIntStateOf(0)}
     var recoveryShown by remember{mutableStateOf(false)}
     var offerShown by remember{mutableStateOf(false)}
+    var homeOffer by remember{mutableStateOf(false)}
+    LaunchedEffect(current,foreground,pack.owned,pack.ready,config){
+        if(current!=Screen.HOME){homeOffer=false;return@LaunchedEffect}
+        if(!foreground || pack.owned || !config.payments || !config.verificationReady || !config.offerHome){homeOffer=false;return@LaunchedEffect}
+        if(!homeOffer && config.homeOfferEligible(prefs.completedRuns,pack.owned,pack.ready,System.currentTimeMillis(),prefs.offerShownAt)){
+            homeOffer=true;prefs.offerShownAt=System.currentTimeMillis();analytics.event("style_home_offer_shown",difficulty)
+        }
+    }
     val showOffer=(down || won) && offerShown && config.payments && config.verificationReady && pack.ready && !pack.owned
     LaunchedEffect(config.googleSignIn){account.configure(config.googleSignIn)}
     LaunchedEffect(current,foreground,accountState.configured,accountState.signedIn){
@@ -169,6 +185,20 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
         try{results=social.search(query).filter{it.id!=own?.id}}catch(cancelled:CancellationException){throw cancelled}
         catch(_:Exception){searchError="Search unavailable. Retry."}finally{searching=false}
     }
+    LaunchedEffect(current,foreground){
+        if(current==Screen.TODAY && foreground)while(isActive){leaderboardDay=competitionDay();delay(30_000)}
+    }
+    LaunchedEffect(current,foreground,difficulty,refresh,leaderboardDay,config.friends,loadingSocial){
+        leaders=emptyList();leadersError=""
+        if(current!=Screen.TODAY || !foreground || !config.friends)return@LaunchedEffect
+        if(loadingSocial){leadersLoading=true;return@LaunchedEffect}
+        if(!social.available){leadersError="Connect to see today's leaders.";return@LaunchedEffect}
+        leadersLoading=true
+        try { leaders=social.leaders(difficulty) }
+        catch(cancelled:CancellationException){throw cancelled}
+        catch(_:Exception){leadersError="Couldn’t load today’s leaders."}
+        finally{leadersLoading=false}
+    }
     DisposableEffect(lifecycle) {
         val observer=LifecycleEventObserver { _,event ->
             when(event){
@@ -181,7 +211,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
     }
     DisposableEffect(sensorActive,touch) {if(sensorActive && !touch)tilt.start() else tilt.stop();onDispose{tilt.stop()}}
     LaunchedEffect(track,autoMusic,difficulty,music,current,running,preview,foreground,pack.owned,onboardingPlaying) {
-        audio.update(if(autoMusic && current!=Screen.MUSIC)difficulty.ordinal else if(track<3 || pack.owned)track else 0,music,foreground && (running || current==Screen.MUSIC && preview || current==Screen.ONBOARDING && onboardingPlaying))
+        audio.update(if(autoMusic && current!=Screen.MUSIC)difficulty.ordinal else if(track<3 || pack.owned || current==Screen.MUSIC && preview)track else 0,music,foreground && (running || current==Screen.MUSIC && preview || current==Screen.ONBOARDING && onboardingPlaying))
     }
     fun go(screen:Screen){if(screen==Screen.STYLE)analytics.event("style_pack_view",difficulty,score);if(screen==Screen.MUSIC && autoMusic)track=difficulty.ordinal;if(navigation.last()!=screen)navigation.add(screen)}
     fun back(){
@@ -244,14 +274,14 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         tilt={tilt.value},useTouch={touch=true;prefs.touch=true;analytics.event("tutorial_touch_selected",difficulty)},
                         onStep={next->if(next==onboardingStep+1){analytics.tutorial("tutorial_step_complete",onboardingStep,onboardingReplay);onboardingStep=next;prefs.onboardingStep=next;tilt.calibrate()}},
                         complete={finishOnboarding(false)},skip={finishOnboarding(true)},back={back()},
-                        landed={audio.impact(effects);if(vibration)haptic.clink(.55f)},playing={onboardingPlaying=it},balanceBits=prefs.onboardingBalance,saveBalance={prefs.onboardingBalance=it},
+                        landed={if(vibration)haptic.clink(.55f)},playing={onboardingPlaying=it},balanceBits=prefs.onboardingBalance,saveBalance={prefs.onboardingBalance=it},
                         account=accountState,signIn={(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}},useSaved={scope.launch{account.useSavedProfile()}},cancelSwitch={account.cancelSwitch()},username=own?.username,chooseUsername={go(Screen.PROFILE)})
                     Screen.ACCOUNT -> Page({account.cancelSwitch();back()},footer={
                         if(accountState.message.isNotBlank())Utility(accountState.message,Modifier.padding(vertical=12.dp),size=11)
                         when {
                             accountState.busy -> Utility("CONNECTING…",Modifier.padding(vertical=16.dp))
                             accountState.savedProfile -> {Action("USE SAVED PROFILE"){scope.launch{account.useSavedProfile()}};LinkRow("CANCEL"){account.cancelSwitch()}}
-                            accountState.signedIn -> {Action("DONE"){back()};LinkRow("SIGN OUT"){scope.launch{account.signOut()}};LinkRow("DELETE ACCOUNT"){context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://stack-damercy.web.app/delete-account")))}}
+                            accountState.signedIn -> {LinkRow("SIGN OUT"){scope.launch{account.signOut()}};LinkRow("DELETE ACCOUNT"){context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://stack-damercy.web.app/delete-account")))}}
                             accountState.configured -> {Action("CONTINUE WITH GOOGLE"){(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}};LinkRow("KEEP PLAYING AS GUEST"){back()}}
                             else -> Action("KEEP PLAYING"){back()}
                         }
@@ -266,7 +296,15 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         Spacer(Modifier.height(16.dp));Utility("Guest play stays available. Signing out keeps device records here.",size=10)
                         Spacer(Modifier.weight(1f))
                     }
-                    Screen.HOME -> HomeScreen(difficulty,prefs.best(difficulty),{go(Screen.SETTINGS)},{go(Screen.DIFFICULTY)},{start()},{if(config.trials)go(Screen.TRIALS)},{go(Screen.TODAY)},config.trials)
+                    Screen.HOME -> HomeScreen(difficulty,prefs.best(difficulty),{go(Screen.SETTINGS)},{go(Screen.DIFFICULTY)},{start()},{if(config.trials)go(Screen.TRIALS)},{go(Screen.TODAY)},config.trials){
+                        if(homeOffer && !pack.owned){
+                            Spacer(Modifier.height(12.dp))
+                            Row(Modifier.fillMaxWidth().border(1.dp,Ink).background(Cream),verticalAlignment=Alignment.CenterVertically){
+                                PressSurface(Modifier.weight(1f).height(64.dp),"Explore Style Pack",onClick={go(Screen.STYLE)}){Column(Modifier.align(Alignment.CenterStart).padding(start=12.dp)){Utility("CHANGE THE MOOD",size=11);Utility("THEMES + MUSIC · ${pack.price}",size=9)}}
+                                PressSurface(Modifier.size(48.dp),"Dismiss Style Pack offer",onClick={homeOffer=false;analytics.event("style_offer_dismissed",difficulty)}){Utility("×",Modifier.align(Alignment.Center),size=24)}
+                            }
+                        }else if(pack.owned || config.styleDiscovery)LinkRow(if(pack.owned)"YOUR STYLE" else "THEMES + MUSIC"){go(Screen.STYLE)}
+                    }
                     Screen.DIFFICULTY -> Page({back()}) {
                         PosterFit("DIFFICULTY",color=Ink);Spacer(Modifier.height(18.dp))
                         Difficulty.entries.forEach { mode ->
@@ -298,7 +336,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         pause={paused=true;reward=null},resume={tilt.calibrate();paused=false},reset={start(trial,tutorial)},home={prefs.introduced=true;home()},settings={go(Screen.SETTINGS)},
                         toggleMusic={music=if(music>0f)0f else .7f;prefs.music=music},musicOn=music>0f,
                         useTouch={touch=true;prefs.touch=true},nextTrial={start((trial+1).coerceAtMost(3))},offer=showOffer,style={go(Screen.STYLE)},invite=config.friends && prefs.completedRuns>=runConfig.inviteAfterRuns,friends={go(Screen.RIVALS)},record=newBest)
-                    Screen.SETTINGS -> Page({back()},footer={Action("DONE",Modifier.padding(top=8.dp)){back()}}) {
+                    Screen.SETTINGS -> Page({back()}) {
                         PosterFit("SETTINGS",color=Ink);Spacer(Modifier.height(15.dp))
                         SettingSlider("MUSIC",music,{music=it;prefs.music=it})
                         PressSurface(Modifier.align(Alignment.End).height(42.dp),onClick={go(Screen.MUSIC)}){Utility("SOUNDTRACK ›",Modifier.align(Alignment.Center))};Rule()
@@ -316,24 +354,36 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         LinkRow("HOW TO PLAY"){onboardingReplay=true;onboardingStep=0;prefs.onboardingStep=0;prefs.onboardingBalance=0;analytics.event("tutorial_replay",difficulty);go(Screen.ONBOARDING)};Rule()
                         LinkRow("RESET LEVEL"){start(trial,tutorial)};Rule();LinkRow("PRIVACY"){context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://stack-damercy.web.app/privacy")))};Rule()
                     }
-                    Screen.MUSIC -> Page({back()},footer={Action("DONE",Modifier.padding(top=8.dp)){back()}}) {
+                    Screen.MUSIC -> Page({back()},footer={
+                        if(track>=3 && !pack.owned){Utility("15 SECOND PREVIEW · STYLE PACK",Modifier.padding(top=14.dp),size=10);LinkRow("KEEP THIS GROOVE"){go(Screen.STYLE)}}
+                    }) {
                         PosterFit("MUSIC")
                         TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(125.dp),decorative=true)
                         Spacer(Modifier.height(28.dp))
                         val names=listOf("MIDNIGHT SIGNAL","SIDE B","NIGHT RUN") + if(pack.owned || config.styleDiscovery)listOf("AFTER HOURS","NEON TAPE","LAST LIGHT") else emptyList()
                         val details=listOf("96 BPM · DARK ANALOGUE","112 BPM · FUNK & KEYS","120 BPM · NEON ARCADE","108 BPM · WARM SYNTH","116 BPM · BRIGHT ARPS","124 BPM · LATE ELECTRO")
-                        names.forEachIndexed {i,name -> Rule();PressSurface(Modifier.fillMaxWidth().height(86.dp),onClick={if(i>=3 && !pack.owned){go(Screen.STYLE)}else {if(track==i)preview=!preview else {track=i;prefs.track=i;preview=true};autoMusic=false;prefs.autoMusic=false}}){
+                        names.forEachIndexed {i,name -> Rule();PressSurface(Modifier.fillMaxWidth().height(86.dp),onClick={if(i>=3 && !pack.owned){if(track==i)preview=!preview else {track=i;preview=true};analytics.event("style_music_preview",difficulty)}else {if(track==i)preview=!preview else {track=i;prefs.track=i;preview=true};autoMusic=false;prefs.autoMusic=false}}){
                             Row(Modifier.fillMaxSize(),verticalAlignment=Alignment.CenterVertically){
                                 Canvas(Modifier.size(16.dp)){if(track==i)drawCircle(Vermilion,6.dp.toPx())};Utility("0${i+1}",Modifier.padding(horizontal=9.dp));Column(Modifier.weight(1f)){Poster(name,color=Ink,size=25);Utility(details[i],size=9)}
                                 if(track==i && preview)GrooveWave(Modifier.padding(end=8.dp))
-                                Poster(if(i>=3 && !pack.owned)"+" else if(track==i && preview)"Ⅱ" else "▶",color=Ink,size=23)
+                                Poster(if(track==i && preview)"Ⅱ" else if(i>=3 && !pack.owned)"+" else "▶",color=Ink,size=23)
                             }
-                        }};Rule();SettingRow("AUTO BY DIFFICULTY"){Switch(autoMusic,"Auto soundtrack"){autoMusic=it;prefs.autoMusic=it}};Utility("You can choose your own groove.",size=10)
+                        }};Rule()
+                        SettingRow("AUTO BY DIFFICULTY"){Switch(autoMusic,"Auto soundtrack"){autoMusic=it;prefs.autoMusic=it}};Utility("You can choose your own groove.",size=10)
                     }
                     Screen.TODAY -> Page({back()}) {
                         var time by remember{mutableStateOf(competitionTimeLabel())}
                         LaunchedEffect(foreground){while(foreground){time=competitionTimeLabel();delay(60_000)}}
-                        PosterFit("TODAY");Utility(time.date,Modifier.padding(top=14.dp),size=10);Utility("DAILY BEST",Modifier.padding(vertical=16.dp));Rule()
+                        PosterFit("TODAY");Utility(time.date,Modifier.padding(top=14.dp),size=10)
+                        if(config.friends){
+                            Utility("TOP THREE",Modifier.padding(vertical=16.dp))
+                            Row(Modifier.fillMaxWidth().border(1.dp,Ink)){Difficulty.entries.forEach{mode->PressSurface(Modifier.weight(1f).height(44.dp).background(if(mode==difficulty)Ink else Sun),"Leaderboard ${mode.title}",onClick={difficulty=mode;prefs.difficulty=mode}){Utility(mode.label,Modifier.align(Alignment.Center),if(mode==difficulty)Sun else Ink,size=10)}}}
+                            if(leadersLoading)Utility("LOADING…",Modifier.padding(vertical=16.dp),size=10)
+                            else if(leadersError.isNotBlank()){Utility(leadersError,Modifier.padding(top=16.dp),size=10);LinkRow("RETRY"){refresh++}}
+                            else if(leaders.isEmpty())Utility("First tower takes the lead.",Modifier.padding(vertical=20.dp),size=11)
+                            else leaders.forEachIndexed{index,player->Row(Modifier.fillMaxWidth().heightIn(min=64.dp).testTag("daily_rank_${index+1}"),verticalAlignment=Alignment.CenterVertically){Utility("0${index+1}",Modifier.padding(end=16.dp),color=if(index==0)Vermilion else Ink,size=22);Utility("@${player.username}",Modifier.weight(1f),size=13);Utility("${player.score(difficulty,true)}",size=22)};Rule()}
+                        }
+                        Utility("YOUR DAILY BEST",Modifier.padding(vertical=16.dp));Rule()
                         Difficulty.entries.forEach {mode ->SettingRow(mode.title){Utility("${prefs.today(mode)}",size=22)};Rule()}
                         Spacer(Modifier.height(24.dp));Utility(time.reset,size=10)
                         Spacer(Modifier.weight(1f));if(config.friends)Action("FRIENDS"){go(Screen.RIVALS)};LinkRow(if(own==null)"SET USERNAME" else "@${own!!.username}"){go(Screen.PROFILE)}
@@ -396,9 +446,8 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                     }
                     Screen.STYLE -> Page({back()},footer={
                         if(pack.message.isNotBlank())Utility(pack.message,Modifier.padding(vertical=10.dp),size=10)
-                        if(pack.owned)Action("DONE"){back()}
-                        else if(config.payments && config.verificationReady && pack.ready && !pack.busy && !pack.pending)Action("UNLOCK ${pack.price}"){analytics.event("style_purchase_started",difficulty,score);(context as? android.app.Activity)?.let{store.buy(it,config)}}
-                        else if(pack.message.isBlank())Utility(if(pack.busy)"CHECKING PURCHASE..." else "PACK COMING SOON",Modifier.padding(vertical=16.dp),size=10)
+                        if(!pack.owned && config.payments && config.verificationReady && pack.ready && !pack.busy && !pack.pending)Action("UNLOCK ${pack.price}"){analytics.event("style_purchase_started",difficulty,score);(context as? android.app.Activity)?.let{store.buy(it,config)}}
+                        else if(!pack.owned && pack.message.isBlank())Utility(if(pack.busy)"CHECKING PURCHASE..." else "PACK COMING SOON",Modifier.padding(vertical=16.dp),size=10)
                     }) {
                         PosterFit("YOUR STYLE",color=Ink);Utility("THREE THEMES. THREE NEW GROOVES.",Modifier.padding(vertical=16.dp),size=10)
                         BalanceSkin.entries.forEach{choice->
@@ -461,7 +510,7 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
     val beam=PiecePose(0f,0f,-.07f,3.4f,.28f,PieceKind.SLAB,1)
     return BalanceFrame(listOf(PiecePose(.05f,.45f,-.12f,1.5f,.5f,PieceKind.SLAB,0),PiecePose(-.98f,.59f,.08f,.78f,.78f,PieceKind.DISC,2),PiecePose(.85f,.92f,-.30f,1.3f,.5f,if(variant==2)PieceKind.WEDGE else PieceKind.SLAB,1)),beam,null,0,0f,false,false,false,0f)
 }
-@Composable private fun HomeScreen(difficulty:Difficulty,best:Int,settings:()->Unit,modes:()->Unit,play:()->Unit,trials:()->Unit,today:()->Unit,trialsEnabled:Boolean=true) {
+@Composable private fun HomeScreen(difficulty:Difficulty,best:Int,settings:()->Unit,modes:()->Unit,play:()->Unit,trials:()->Unit,today:()->Unit,trialsEnabled:Boolean=true,style:@Composable ()->Unit={}) {
     val palette=LocalBalancePalette.current
     val Sun=palette.background;val Cobalt=palette.primary;val Vermilion=palette.accent;val Ink=palette.ink;val Cream=palette.paper
     BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal=20.dp,vertical=8.dp)) {
@@ -471,7 +520,7 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Utility("OFF BALANCE",color=Ink,size=9);Symbol("Settings",onClick=settings)}
             if(wide)Row(Modifier.weight(1f).fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(50.dp)) {
                 Column(Modifier.weight(1f)){PosterFit("STACK");Utility("TAP. TILT. RECOVER.",Modifier.fillMaxWidth(),align=TextAlign.Center);TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(240.dp),decorative=true)}
-                Column(Modifier.weight(1f)){HomeActions(difficulty,best,modes,play,trials,today,trialsEnabled)}
+                Column(Modifier.weight(1f)){HomeActions(difficulty,best,modes,play,trials,today,trialsEnabled);style()}
             } else {
                 BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
                     val headlineHeight=minOf(maxWidth,maxHeight*.62f)
@@ -485,7 +534,7 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
                         TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().weight(1f),decorative=true)
                     }
                 }
-                HomeActions(difficulty,best,modes,play,trials,today,trialsEnabled)
+                HomeActions(difficulty,best,modes,play,trials,today,trialsEnabled);style()
             }
         }
     }

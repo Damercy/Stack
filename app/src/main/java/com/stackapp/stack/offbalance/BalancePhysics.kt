@@ -7,7 +7,7 @@ import org.jbox2d.dynamics.joints.RevoluteJointDef
 import kotlin.math.*
 
 enum class Difficulty(val title: String, val label: String, val description: String, val base: Float) {
-    STEADY("STEADY", "EASY", "Wide base. Mostly slabs.", 3.2f),
+    STEADY("STEADY", "EASY", "Wide base. Gentle pace.", 3.2f),
     WOBBLY("WOBBLY", "NORMAL", "Mixed shapes. Find balance.", 2.8f),
     CHAOS("CHAOS", "HARD", "Tight base. Faster pressure.", 2.35f)
 }
@@ -87,14 +87,21 @@ class BalancePhysics(val difficulty: Difficulty, val tutorial: Boolean = false, 
         val assist = when {
             trial==2 -> 100f
             tutorial || trial>=0 -> 180f
-            difficulty==Difficulty.STEADY -> 300f+min(score,20)*25f
+            difficulty==Difficulty.STEADY -> {val layers=min(score,60);300f+layers*25f+layers*layers*8f}
             difficulty==Difficulty.WOBBLY -> 100f
             else -> 80f
         }
-        val damping=if(difficulty==Difficulty.STEADY && trial<0)18f else 8f
+        val damping=if(difficulty==Difficulty.STEADY && trial<0)18f+min(score,60)*3f else 8f
         beam.applyTorque(-angle * assist - beam.angularVelocity * damping - input * 19f)
+        // Easy mode adds gentle angular recovery to supported slabs. Contacts,
+        // lateral motion and detached pieces remain fully simulated.
+        if(difficulty==Difficulty.STEADY && trial<0 && !tutorial)bodies.forEach{(body,pose)->
+            if(body!==pending && pose.kind==PieceKind.SLAB)
+                body.applyTorque(-(body.angle-angle)*4f-body.angularVelocity*.8f)
+        }
         world.gravity.set(input * 2.8f, -10f)
-        world.step(STEP.toFloat(), 8, 4)
+        val tallSteady=difficulty==Difficulty.STEADY && trial<0 && bodies.size>10
+        world.step(STEP.toFloat(), if(tallSteady)16 else 8, if(tallSteady)8 else 4)
         // A loose piece must end the run even when the beam itself stays upright.
         // Check before scoring: contact with the floor is never a successful landing.
         if (bodies.any { (body, pose) ->
@@ -115,7 +122,7 @@ class BalancePhysics(val difficulty: Difficulty, val tutorial: Boolean = false, 
                 nextKind = when {
                     trial == 0 || tutorial && score < 5 -> PieceKind.SLAB
                     trial == 3 -> when(score%3){1->PieceKind.DISC;2->PieceKind.WEDGE;else->PieceKind.SLAB}
-                    difficulty == Difficulty.STEADY -> if (score>=12 && score%10==2) PieceKind.DISC else PieceKind.SLAB
+                    difficulty == Difficulty.STEADY -> PieceKind.SLAB
                     difficulty == Difficulty.WOBBLY && score>=6 && score%8==6 -> PieceKind.DISC
                     difficulty == Difficulty.CHAOS && score>=8 && score%7==1 -> PieceKind.WEDGE
                     difficulty == Difficulty.CHAOS && score>=4 && score%7==4 -> PieceKind.DISC
@@ -126,23 +133,23 @@ class BalancePhysics(val difficulty: Difficulty, val tutorial: Boolean = false, 
         }
         val range=when {
             trial==0 || tutorial && score<4 -> .45f
-            difficulty==Difficulty.STEADY -> .32f+min(score,18)*.018f
+            difficulty==Difficulty.STEADY -> .32f+min(score,30)*.008f
             score<4 && difficulty==Difficulty.WOBBLY -> .55f
             difficulty==Difficulty.CHAOS -> 1.15f
             else -> .9f
         }
         phase += speedMultiplier() * (when(difficulty){Difficulty.CHAOS->1.9f;Difficulty.WOBBLY->1.35f;else->1.05f}) * STEP.toFloat()
-        if (!down && pending == null) nextX = sin(phase) * range
+        if (!down && pending == null) nextX = (if(difficulty==Difficulty.STEADY && trial<0 && !tutorial)bodies.last().first.position.x else 0f) + sin(phase) * range
         val lean = abs(beam.angle)
         if (lean > .15f) warned = true
         if (warned && lean < .06f) recovered = true
         if (trial == 1 && score >= 1 && lean < .15f) hold += STEP.toFloat() else if (trial == 1) hold = 0f
     }
 
-    fun speedMultiplier(): Float = if (tutorial || trial >= 0) 1f else 1f + min(score, 40) * .02f
+    fun speedMultiplier(): Float = if (tutorial || trial >= 0) 1f else if(difficulty==Difficulty.STEADY)1f+min(score,60)*.008f else 1f + min(score, 40) * .02f
 
     private fun width(kind: PieceKind) = when (kind) {
-        PieceKind.SLAB -> if (difficulty == Difficulty.CHAOS && !tutorial) 1.2f else 1.65f
+        PieceKind.SLAB -> if (difficulty == Difficulty.CHAOS && !tutorial) 1.2f else if(difficulty==Difficulty.STEADY && !tutorial && trial<0)1.9f else 1.65f
         PieceKind.DISC -> 1f
         PieceKind.WEDGE -> 1.45f
     }

@@ -22,7 +22,10 @@ data class BalanceConfig(
     val inviteAfterRuns:Int=3, val trials:Boolean=true,
     val reviews:Boolean=true, val reviewMinRuns:Int=5, val reviewAgeHours:Int=24,
     val googleSignIn:Boolean=false,
+    val offerHome:Boolean=false,
 ) {
+    fun homeOfferEligible(runs:Int,owned:Boolean,ready:Boolean,now:Long,lastShown:Long)=
+        offerHome && payments && verificationReady && ready && !owned && runs>=minimumRuns && now-lastShown>=offerCooldownHours*3_600_000L
     fun offerEligible(runs:Int,newBest:Boolean,trialCompleted:Boolean,playing:Boolean,owned:Boolean,now:Long,lastShown:Long)=
         payments && verificationReady && !playing && !owned && runs>=minimumRuns &&
             (offerResults && newBest || offerTrials && trialCompleted) && now-lastShown>=offerCooldownHours*3_600_000L
@@ -34,6 +37,7 @@ data class BalanceConfig(
             "friends_enabled" to true,"reminders_enabled" to true,"rival_reminders_enabled" to true,"reminder_away_hours" to 6,"reminder_cooldown_hours" to 24,
             "invite_after_runs" to 3,"trials_enabled" to true,
             "reviews_enabled" to true,"review_min_runs" to 5,"review_min_age_hours" to 24,"google_sign_in_enabled" to false,
+            "offer_home_enabled" to false,
         )
         fun decode(values:Map<String,Any>):BalanceConfig {
             fun bool(key:String)=values[key].toString().toBooleanStrictOrNull() ?: defaults[key] as Boolean
@@ -43,7 +47,7 @@ data class BalanceConfig(
                 bool("offer_results_enabled"),bool("offer_trials_enabled"),bool("offer_settings_enabled"),number("offer_min_runs",3,100),number("offer_cooldown_hours",24,720),
                 bool("celebrations_enabled"),number("celebration_duration_ms",600,1600),number("milestone_every",5,50),bool("friends_enabled"),bool("reminders_enabled"),bool("rival_reminders_enabled"),
                 number("reminder_away_hours",6,72),number("reminder_cooldown_hours",24,168),number("invite_after_runs",3,100),bool("trials_enabled"),
-                bool("reviews_enabled"),number("review_min_runs",5,100),number("review_min_age_hours",0,720),bool("google_sign_in_enabled"))
+                bool("reviews_enabled"),number("review_min_runs",5,100),number("review_min_age_hours",0,720),bool("google_sign_in_enabled"),bool("offer_home_enabled"))
         }
     }
 }
