@@ -1,69 +1,47 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /daily_leaderboards/{dayKey}/scores/{deviceId} {
-      allow read: if true;
-      allow create, update: if request.resource.data.device_id == deviceId
-        && request.resource.data.day_key == dayKey
-        && request.resource.data.display_name is string
-        && request.resource.data.display_name.size() > 0
-        && request.resource.data.display_name.size() <= 20
-        && request.resource.data.display_name.matches('^[A-Za-z0-9_. -]+$')
-        && request.resource.data.today_count is int
-        && request.resource.data.today_count >= 0
-        && request.resource.data.country_code is string
-        && request.resource.data.country_code.size() <= 2
-        && request.resource.data.keys().hasOnly([
-          'device_id',
-          'display_name',
-          'today_count',
-          'day_key',
-          'country_code',
-          'updated_at'
-        ]);
+    function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+    function scores(s) {
+      return s is map && s.keys().hasOnly(['STEADY', 'WOBBLY', 'CHAOS']) && s.size() == 3
+        && s.STEADY is int && s.STEADY >= 0 && s.STEADY <= 100000
+        && s.WOBBLY is int && s.WOBBLY >= 0 && s.WOBBLY <= 100000
+        && s.CHAOS is int && s.CHAOS >= 0 && s.CHAOS <= 100000;
     }
-
-    match /profiles/{deviceId} {
-      allow read: if true;
-      allow create, update: if request.resource.data.device_id == deviceId
-        && request.resource.data.display_name is string
-        && request.resource.data.display_name.size() > 0
-        && request.resource.data.display_name.size() <= 20
-        && request.resource.data.country_code is string
-        && request.resource.data.country_code.size() <= 2
-        && request.resource.data.username_key is string
-        && request.resource.data.keys().hasOnly([
-          'device_id',
-          'display_name',
-          'country_code',
-          'username_key',
-          'updated_at'
-        ]);
+    function monotonic(a, b) { return a.STEADY >= b.STEADY && a.WOBBLY >= b.WOBBLY && a.CHAOS >= b.CHAOS; }
+    function playerValid(uid) {
+      let d = request.resource.data;
+      return owner(uid) && d.keys().hasOnly(['username', 'key', 'best', 'day', 'daily'])
+        && d.username is string && d.username.matches('^[A-Za-z0-9_]{3,20}$')
+        && d.key == d.username.lower() && d.day is string && d.day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && scores(d.best) && scores(d.daily) && monotonic(d.best, d.daily)
+        && getAfter(/databases/$(database)/documents/handles/$(d.key)).data.owner == uid;
     }
-
-    match /usernames/{usernameKey} {
-      allow read: if true;
-      allow create: if !exists(/databases/$(database)/documents/usernames/$(usernameKey))
-        && request.resource.data.normalized_name == usernameKey
-        && request.resource.data.device_id is string
-        && request.resource.data.display_name is string
-        && request.resource.data.display_name.size() > 0
-        && request.resource.data.display_name.size() <= 20
-        && request.resource.data.keys().hasOnly([
-          'normalized_name',
-          'display_name',
-          'device_id',
-          'created_at'
-        ]);
-      allow update: if resource.data.device_id == request.resource.data.device_id
-        && request.resource.data.normalized_name == usernameKey
-        && request.resource.data.keys().hasOnly([
-          'normalized_name',
-          'display_name',
-          'device_id',
-          'created_at'
-        ]);
+    match /players/{uid} {
+      allow read: if request.auth != null;
+      allow create: if playerValid(uid);
+      allow update: if playerValid(uid) && monotonic(request.resource.data.best, resource.data.best)
+        && request.resource.data.day >= resource.data.day
+        && (request.resource.data.day != resource.data.day || monotonic(request.resource.data.daily, resource.data.daily));
+      allow delete: if owner(uid);
     }
+    match /handles/{key} {
+      allow read: if request.auth != null;
+      allow create: if owner(request.resource.data.owner)
+        && request.resource.data.keys().hasOnly(['owner', 'username', 'key'])
+        && request.resource.data.key == key && request.resource.data.username.lower() == key
+        && getAfter(/databases/$(database)/documents/players/$(request.auth.uid)).data.key == key;
+      allow update: if owner(resource.data.owner) && request.resource.data.owner == resource.data.owner
+        && request.resource.data.keys().hasOnly(['owner', 'username', 'key'])
+        && request.resource.data.key == key && request.resource.data.username.lower() == key
+        && getAfter(/databases/$(database)/documents/players/$(request.auth.uid)).data.key == key;
+      allow delete: if owner(resource.data.owner)
+        && (!existsAfter(/databases/$(database)/documents/players/$(request.auth.uid))
+          || getAfter(/databases/$(database)/documents/players/$(request.auth.uid)).data.key != key);
+    }
+    // Legacy tap-count boards are read-only; new clients publish authenticated tower records.
+    match /daily_leaderboards/{day}/scores/{uid} { allow read: if true; }
+    match /profiles/{uid} { allow read: if false; }
+    match /usernames/{key} { allow read: if false; }
   }
 }

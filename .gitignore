@@ -35,3 +35,4 @@ store-assets/
 scripts/source_assets/
 /docs/
 /AGENTS.md
+firebase/functions/lib/

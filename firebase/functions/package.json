@@ -5,16 +5,17 @@
     "node": "22"
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc",
     "lint": "tsc --noEmit",
     "deploy": "firebase deploy --only functions,firestore"
   },
   "dependencies": {
     "firebase-admin": "^13.0.0",
-    "firebase-functions": "^6.0.0"
+    "firebase-functions": "^6.0.0",
+    "google-auth-library": "^10.0.0"
   },
   "devDependencies": {
     "typescript": "^5.8.0"
-  }
+  },
+  "main": "lib/index.js"
 }
-

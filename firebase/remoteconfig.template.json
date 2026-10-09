@@ -1,0 +1,118 @@
+{
+  "parameters": {
+    "payments_enabled": {
+      "defaultValue": {
+        "value": "false"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "payment_verification_ready": {
+      "defaultValue": {
+        "value": "false"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "style_pack_product_id": {
+      "defaultValue": {
+        "value": "off_balance_style_pack"
+      },
+      "valueType": "STRING"
+    },
+    "style_pack_discovery_enabled": {
+      "defaultValue": {
+        "value": "false"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "offer_results_enabled": {
+      "defaultValue": {
+        "value": "false"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "offer_trials_enabled": {
+      "defaultValue": {
+        "value": "false"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "offer_settings_enabled": {
+      "defaultValue": {
+        "value": "false"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "offer_min_runs": {
+      "defaultValue": {
+        "value": "3"
+      },
+      "valueType": "NUMBER"
+    },
+    "offer_cooldown_hours": {
+      "defaultValue": {
+        "value": "24"
+      },
+      "valueType": "NUMBER"
+    },
+    "celebrations_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "celebration_duration_ms": {
+      "defaultValue": {
+        "value": "1100"
+      },
+      "valueType": "NUMBER"
+    },
+    "milestone_every": {
+      "defaultValue": {
+        "value": "5"
+      },
+      "valueType": "NUMBER"
+    },
+    "friends_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "reminders_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "rival_reminders_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    },
+    "reminder_away_hours": {
+      "defaultValue": {
+        "value": "6"
+      },
+      "valueType": "NUMBER"
+    },
+    "reminder_cooldown_hours": {
+      "defaultValue": {
+        "value": "24"
+      },
+      "valueType": "NUMBER"
+    },
+    "invite_after_runs": {
+      "defaultValue": {
+        "value": "3"
+      },
+      "valueType": "NUMBER"
+    },
+    "trials_enabled": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "valueType": "BOOLEAN"
+    }
+  }
+}

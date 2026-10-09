@@ -1,5 +1,6 @@
 <resources>
     <color name="stack_black">#000000</color>
     <color name="stack_white">#FFFFFF</color>
+    <color name="stack_sun">#F3E36B</color>
 </resources>
 
