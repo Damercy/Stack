@@ -136,8 +136,10 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
         if(!result && current!=Screen.HOME)return@LaunchedEffect
         if(result && down)while(!game.collapseFinished){delay(100)}
         delay(if(result)800 else 1_500)
-        review.consider(activity,config,ReviewMoment(newBest,score,prefs.trialsComplete,current==Screen.HOME)){
-            foreground && navigation.last()==current && reward==null && !showOffer && (current!=Screen.PLAY || down || won)
+        scope.launch {
+            review.consider(activity,config,ReviewMoment(newBest,score,prefs.trialsComplete,current==Screen.HOME)){
+                foreground && navigation.last()==current && reward==null && !showOffer && (current!=Screen.PLAY || down || won)
+            }
         }
     }
     LaunchedEffect(current,foreground,config,configUpdate,onboardingStep){if(foreground && current!=Screen.PLAY){remote.boundary();store.sync(config);reminders.sync()}}

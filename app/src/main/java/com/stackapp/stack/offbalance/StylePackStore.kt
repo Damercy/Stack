@@ -56,6 +56,8 @@ private class PlayStylePack(context:Context):StylePackStore, PurchasesUpdatedLis
     private suspend fun call(name:String,data:Map<String,Any> = emptyMap()):Map<*,*> {
         val auth=FirebaseAuth.getInstance()
         GuestIdentity.user(auth)
+        // Wait for attestation instead of sending the SDK's placeholder on a fresh install.
+        com.google.firebase.appcheck.FirebaseAppCheck.getInstance().getAppCheckToken(false).await()
         return FirebaseFunctions.getInstance().getHttpsCallable(name).call(data).await().data as? Map<*,*> ?: error("Invalid store response")
     }
     private fun grant(owned:Boolean){prefs.edit().putBoolean("verified",owned).apply();state.value=state.value.copy(owned=owned,pending=false,message=if(owned)"PACK UNLOCKED" else "")}
