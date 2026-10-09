@@ -21,7 +21,7 @@ import kotlin.math.*
 @Composable fun OnboardingScreen(step:Int,foreground:Boolean,touch:Boolean,tilt:()->Float,
     useTouch:()->Unit,onStep:(Int)->Unit,complete:()->Unit,skip:()->Unit,back:()->Unit,
     landed:()->Unit,playing:(Boolean)->Unit,balanceBits:Int,saveBalance:(Int)->Unit,
-    account:AccountState=AccountState(),signIn:()->Unit={},useSaved:()->Unit={},cancelSwitch:()->Unit={}) {
+    account:AccountState=AccountState(),signIn:()->Unit={},useSaved:()->Unit={},cancelSwitch:()->Unit={},username:String?=null,chooseUsername:()->Unit={}) {
     val palette=LocalBalancePalette.current
     val game=remember { BalancePhysics(Difficulty.STEADY,true,trial=0) }
     val frame=remember { mutableStateOf(game.snapshot()) }
@@ -71,16 +71,19 @@ import kotlin.math.*
                 repeat(3){i->Box(Modifier.weight(1f).height(4.dp).background(if(i<=step)palette.accent else palette.ink.copy(alpha=.2f)))}
             }
             Spacer(Modifier.height(18.dp))
+            if(step<2 && account.signedIn){AccountIdentityCard(account,username);Spacer(Modifier.height(12.dp))}
             val title=when(step){0->"LAND IT";1->"BALANCE";else->if(account.configured && !account.signedIn)"MAKE IT YOURS" else "YOU'RE IN"}
             val hint=when(step){0->if(landComplete)"ONE DOWN. THAT'S THE FEELING." else "TAP ANYWHERE. WATCH IT LAND."
                 1->if(touch)"DRAG LEFT. THEN RIGHT." else "LOWER YOUR LEFT EDGE. THEN YOUR RIGHT."
                 else->if(account.signedIn)"SAVED WITH GOOGLE. READY WHEN YOU ARE." else if(account.configured)"SAVE YOUR RECORDS. TAKE ON YOUR FRIENDS." else "START WITH FIVE. SEE HOW HIGH YOU GO."}
             if(wide)Row(Modifier.weight(1f).fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                 Column(Modifier.weight(1f).padding(end=24.dp)){MovingPoster(title,size=110);Spacer(Modifier.height(16.dp));Utility(hint,size=12)}
-                LessonTower(step,frame,landComplete,input,Modifier.weight(1f).fillMaxHeight())
+                if(step==2 && account.signedIn)Box(Modifier.weight(1f),contentAlignment=Alignment.Center){AccountIdentityCard(account,username)}
+                else LessonTower(step,frame,landComplete,input,Modifier.weight(1f).fillMaxHeight())
             } else {
                 MovingPoster(title,size=110);Spacer(Modifier.height(16.dp));Utility(hint,Modifier.fillMaxWidth(),size=11,align=TextAlign.Center)
-                LessonTower(step,frame,landComplete,input,Modifier.weight(1f).fillMaxWidth())
+                if(step==2 && account.signedIn)Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center){AccountIdentityCard(account,username)}
+                else LessonTower(step,frame,landComplete,input,Modifier.weight(1f).fillMaxWidth())
             }
             when(step){
                 0 -> {
@@ -104,6 +107,7 @@ import kotlin.math.*
                             LinkRow("PLAY AS GUEST",complete)
                         }
                         else -> {
+                            if(account.signedIn && username==null)LinkRow("CHOOSE USERNAME",chooseUsername)
                             Utility("FIRST TARGET / 5 LAYERS",Modifier.fillMaxWidth().padding(vertical=14.dp),align=TextAlign.Center,size=11)
                             Action("LET'S STACK",Modifier.testTag("onboarding_finish"),onClick=complete)
                         }

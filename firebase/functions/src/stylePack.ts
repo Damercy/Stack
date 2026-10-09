@@ -2,6 +2,8 @@ import { getRemoteConfig } from "firebase-admin/remote-config";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { GoogleAuth } from "google-auth-library";
+import { createHash } from "node:crypto";
+import { logger } from "firebase-functions";
 
 const packageName = "com.stackapp.stack";
 const productId = "off_balance_style_pack";
@@ -40,7 +42,7 @@ export const stylePackStatus = onCall(options, async request => {
     };
     let ready = false;
     if (enabled("payments_enabled") && enabled("payment_verification_ready")) {
-      await publisher(`monetization/onetimeproducts/${productId}`);
+      await publisher(`oneTimeProducts/${productId}`);
       ready = true;
     }
     const ref = getFirestore().collection("style_entitlements").doc(request.auth.uid);
@@ -48,7 +50,9 @@ export const stylePackStatus = onCall(options, async request => {
     const owned = typeof previous?.token === "string" && await verify(previous.token);
     if (previous && !owned) await ref.delete();
     return { ready, owned, productId };
-  } catch {
+  } catch (error) {
+    const failure = error as { code?: string | number; response?: { status?: number } };
+    logger.warn("Style Pack readiness failed", { code: failure.response?.status ?? failure.code ?? "unknown" });
     throw new HttpsError("unavailable", "Store unavailable. Try again later.");
   }
 });
@@ -62,11 +66,22 @@ export const verifyStylePack = onCall(options, async request => {
   }
   try {
     const owned = await verify(token);
-    const ref = getFirestore().collection("style_entitlements").doc(request.auth.uid);
-    if (owned) await ref.set({ token, productId, verifiedAt: FieldValue.serverTimestamp() });
-    else await ref.delete();
+    const db = getFirestore();
+    const uid = request.auth.uid;
+    const ref = db.collection("style_entitlements").doc(uid);
+    if (owned) {
+      const receipt = db.collection("style_receipts").doc(createHash("sha256").update(token).digest("hex"));
+      await db.runTransaction(async transaction => {
+        const previous = (await transaction.get(receipt)).data();
+        if (previous && previous.owner !== uid) throw new HttpsError("already-exists", "Restore using the account that purchased this pack.");
+        transaction.set(receipt, { owner: uid, productId });
+        transaction.set(ref, { token, productId, verifiedAt: FieldValue.serverTimestamp() });
+      });
+    }
+    // An unrelated invalid receipt must not erase an existing valid entitlement.
     return { owned, productId };
-  } catch {
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
     throw new HttpsError("unavailable", "Verification unavailable. Restore purchases to retry.");
   }
 });

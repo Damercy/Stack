@@ -48,8 +48,8 @@ class MainActivity : ComponentActivity() {
             }
             val local=RoomTapStore(this@MainActivity)
             val saved=local.load()
-            local.applyAutoMiner(System.currentTimeMillis())
-            AutoMinerWorker.sync(this@MainActivity,saved.autoMinerActive)
+            // The stacking game no longer accrues clicker rewards in the background.
+            AutoMinerWorker.sync(this@MainActivity,false)
             local to saved
         }
         setContent {

@@ -41,7 +41,10 @@ class BalanceReview(context:Context,private val prefs:BalancePreferences,private
             if(!canPresent() || activity.isFinishing || activity.isDestroyed)return
             prefs.reviewAttempted=true
             analytics.event("review_launch_attempt",prefs.difficulty,prefs.best(prefs.difficulty))
+            android.util.Log.i("BalanceReview","Launching Play review flow")
             gateway.launch(activity)
+            analytics.event("review_flow_completed",prefs.difficulty,prefs.best(prefs.difficulty))
+            android.util.Log.i("BalanceReview","Play review flow completed")
         }catch(cancelled:CancellationException){if(cancelled !is TimeoutCancellationException)throw cancelled}
         catch(_:Exception){analytics.event("review_request_failed",prefs.difficulty)}
         finally{busy=false}

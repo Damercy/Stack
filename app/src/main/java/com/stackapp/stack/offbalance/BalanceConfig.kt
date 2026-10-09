@@ -43,7 +43,7 @@ data class BalanceConfig(
                 bool("offer_results_enabled"),bool("offer_trials_enabled"),bool("offer_settings_enabled"),number("offer_min_runs",3,100),number("offer_cooldown_hours",24,720),
                 bool("celebrations_enabled"),number("celebration_duration_ms",600,1600),number("milestone_every",5,50),bool("friends_enabled"),bool("reminders_enabled"),bool("rival_reminders_enabled"),
                 number("reminder_away_hours",6,72),number("reminder_cooldown_hours",24,168),number("invite_after_runs",3,100),bool("trials_enabled"),
-                bool("reviews_enabled"),number("review_min_runs",5,100),number("review_min_age_hours",24,720),bool("google_sign_in_enabled"))
+                bool("reviews_enabled"),number("review_min_runs",5,100),number("review_min_age_hours",0,720),bool("google_sign_in_enabled"))
         }
     }
 }

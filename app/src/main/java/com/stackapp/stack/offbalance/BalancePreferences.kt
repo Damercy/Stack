@@ -14,6 +14,9 @@ class BalancePreferences(context: Context) {
     var onboardingStarted:Boolean
         get()=prefs.getBoolean("onboarding_started",false)
         set(v){prefs.edit().putBoolean("onboarding_started",v).apply()}
+    var googlePromptAttempted:Boolean
+        get()=prefs.getBoolean("google_prompt_attempted",false)
+        set(v){prefs.edit().putBoolean("google_prompt_attempted",v).apply()}
     var onboardingBalance:Int
         get()=prefs.getInt("onboarding_balance",0).coerceIn(0,3)
         set(v){prefs.edit().putInt("onboarding_balance",v.coerceIn(0,3)).apply()}

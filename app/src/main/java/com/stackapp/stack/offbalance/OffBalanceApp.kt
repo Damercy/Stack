@@ -117,6 +117,14 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
     var offerShown by remember{mutableStateOf(false)}
     val showOffer=(down || won) && offerShown && config.payments && config.verificationReady && pack.ready && !pack.owned
     LaunchedEffect(config.googleSignIn){account.configure(config.googleSignIn)}
+    LaunchedEffect(current,foreground,accountState.configured,accountState.signedIn){
+        if(current==Screen.ONBOARDING && foreground && !prefs.introduced && !prefs.googlePromptAttempted && accountState.configured && !accountState.signedIn && !accountState.busy){
+            val activity=context as? android.app.Activity ?: return@LaunchedEffect
+            prefs.googlePromptAttempted=true
+            // Credential UI pauses this Activity; its result must survive that boundary.
+            scope.launch{account.promptSignIn(activity)}
+        }
+    }
     LaunchedEffect(accountState.revision,accountState.signedIn){
         if(accountState.revision>0){own=null;displayName="";saveName("");socialError="";refresh++}
         if(accountState.signedIn)refresh++
@@ -235,7 +243,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         onStep={next->if(next==onboardingStep+1){analytics.tutorial("tutorial_step_complete",onboardingStep,onboardingReplay);onboardingStep=next;prefs.onboardingStep=next;tilt.calibrate()}},
                         complete={finishOnboarding(false)},skip={finishOnboarding(true)},back={back()},
                         landed={audio.impact(effects);if(vibration)haptic.clink(.55f)},playing={onboardingPlaying=it},balanceBits=prefs.onboardingBalance,saveBalance={prefs.onboardingBalance=it},
-                        account=accountState,signIn={(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}},useSaved={scope.launch{account.useSavedProfile()}},cancelSwitch={account.cancelSwitch()})
+                        account=accountState,signIn={(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}},useSaved={scope.launch{account.useSavedProfile()}},cancelSwitch={account.cancelSwitch()},username=own?.username,chooseUsername={go(Screen.PROFILE)})
                     Screen.ACCOUNT -> Page({account.cancelSwitch();back()},footer={
                         if(accountState.message.isNotBlank())Utility(accountState.message,Modifier.padding(vertical=12.dp),size=11)
                         when {
@@ -248,6 +256,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                     }) {
                         PosterFit(if(accountState.signedIn)"SAVED" else "YOUR GAME",color=Ink)
                         Spacer(Modifier.height(24.dp))
+                        if(accountState.signedIn){AccountIdentityCard(accountState,own?.username);Spacer(Modifier.height(18.dp))}
                         Utility(if(accountState.signedIn)"CONNECTED WITH GOOGLE" else "KEEP YOUR USERNAME AND RECORDS ACROSS DEVICES.",size=11)
                         if(accountState.signedIn){Spacer(Modifier.height(12.dp));Utility(if(loadingSocial)"LOADING YOUR RECORDS…" else own?.let{"PLAYING AS @${it.username}"} ?: "YOU'RE SIGNED IN. CHOOSE A USERNAME TO COMPETE.",size=11);if(!loadingSocial && own==null)LinkRow("CHOOSE USERNAME"){go(Screen.PROFILE)}}
                         Spacer(Modifier.height(18.dp));TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(200.dp),decorative=true)
@@ -354,7 +363,17 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         PosterFit("USERNAME",color=Ink)
                         if(accountState.configured && !accountState.signedIn)LinkRow("SAVE WITH GOOGLE"){go(Screen.ACCOUNT)}
                         Spacer(Modifier.height(28.dp));Utility("3–20 LETTERS, NUMBERS OR _",size=10)
-                        BasicTextField(displayName,{displayName=it.filter {c->c in 'A'..'Z'||c in 'a'..'z'||c in '0'..'9'||c=='_'}.take(20);profileError=""},Modifier.fillMaxWidth().padding(vertical=18.dp).semantics{contentDescription="Your username"}.testTag("username_entry"),singleLine=true,textStyle=TextStyle(fontFamily=UtilityFont,fontSize=24.sp,color=Ink),cursorBrush=SolidColor(Vermilion),decorationBox={inner->if(displayName.isBlank())Utility("USERNAME",color=Ink.copy(alpha=.35f),size=24);inner()});Rule()
+                        Spacer(Modifier.height(12.dp))
+                        Row(Modifier.fillMaxWidth().border(2.dp,Ink).background(Cream).padding(18.dp),verticalAlignment=Alignment.CenterVertically){
+                            Utility("@",size=24,color=Cobalt);Spacer(Modifier.width(10.dp))
+                            BasicTextField(displayName,{displayName=it.filter {c->c in 'A'..'Z'||c in 'a'..'z'||c in '0'..'9'||c=='_'}.take(20);profileError=""},Modifier.weight(1f).heightIn(min=32.dp).semantics{contentDescription="Your username"}.testTag("username_entry"),singleLine=true,textStyle=TextStyle(fontFamily=UtilityFont,fontSize=24.sp,color=Ink),cursorBrush=SolidColor(Vermilion),decorationBox={inner->if(displayName.isBlank())Utility("USERNAME",color=Ink.copy(alpha=.35f),size=24);inner()})
+                        }
+                        if(own==null){
+                            val suggestions=remember{listOf("tilt_club","soft_landing","tower_ghost").map{"${it}_${kotlin.random.Random.nextInt(10,100)}"}}
+                            Spacer(Modifier.height(14.dp));Utility("TRY ONE / AVAILABILITY CHECKED ON SAVE",size=9)
+                            suggestions.forEach{suggestion->LinkRow("@$suggestion"){displayName=suggestion;profileError=""}}
+                        }
+
                         Utility(profileError,Modifier.heightIn(min=32.dp),Vermilion);Utility("Your username and scores are public.",size=10);Spacer(Modifier.weight(1f));Action(if(profileBusy)"SAVING…" else "SAVE"){
                             if(!profileBusy)when {
                                 !validUsername(displayName)->profileError="Use 3–20 letters, numbers or _."
