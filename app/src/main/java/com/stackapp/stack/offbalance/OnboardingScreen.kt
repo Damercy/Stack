@@ -21,7 +21,7 @@ import kotlin.math.*
 @Composable fun OnboardingScreen(step:Int,foreground:Boolean,touch:Boolean,tilt:()->Float,
     useTouch:()->Unit,onStep:(Int)->Unit,complete:()->Unit,skip:()->Unit,back:()->Unit,
     landed:()->Unit,playing:(Boolean)->Unit,balanceBits:Int,saveBalance:(Int)->Unit,
-    account:AccountState=AccountState(),signIn:()->Unit={},useSaved:()->Unit={},cancelSwitch:()->Unit={},username:String?=null,chooseUsername:()->Unit={},demo:(()->Unit)?=null) {
+    account:AccountState=AccountState(),signIn:()->Unit={},useSaved:()->Unit={},cancelSwitch:()->Unit={},username:String?=null,chooseUsername:()->Unit={},reviewAccess:(()->Unit)?=null) {
     val palette=LocalBalancePalette.current
     val game=remember { BalancePhysics(Difficulty.STEADY,true,trial=0) }
     val frame=remember { mutableStateOf(game.snapshot()) }
@@ -63,7 +63,7 @@ import kotlin.math.*
         val wide=maxWidth>=650.dp
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){
-                Symbol("Back",onClick=back);Utility("${step+1} / 3",size=11)
+                Symbol("Back",onClick=back);Utility("${step+1} / 3",Modifier.testTag("onboarding_step").then(if(reviewAccess!=null)Modifier.pointerInput(reviewAccess){detectTapGestures(onLongPress={reviewAccess()})}else Modifier),size=11)
                 PressSurface(Modifier.height(48.dp),"Skip lesson",skip){Utility("SKIP",Modifier.align(Alignment.Center))}
             }
             Spacer(Modifier.height(12.dp))
@@ -113,7 +113,6 @@ import kotlin.math.*
                     }
                 }
             }
-            if(demo!=null)LinkRow("TRY DEMO",demo)
             Spacer(Modifier.height(8.dp))
         }
     }

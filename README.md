@@ -37,10 +37,6 @@ The optional Style Pack contains cosmetic themes and extra music. Availability i
 controlled remotely; checkout is shown only when the catalog and purchase
 verification service are ready. Core play does not require a purchase.
 
-Choose **Try demo** during onboarding or in Settings to explore every theme and
-soundtrack with sample profiles and scores. The demo uses local storage and leaves
-your account, purchases, and game records intact.
-
 ## Develop
 
 Requires **JDK 21** and **Android SDK 36**. The app supports Android 8.0 and newer.

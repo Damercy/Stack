@@ -1,0 +1,4 @@
+<resources>
+    <!-- Public verification key only. The signing key and access code stay private. -->
+    <string name="review_access_public_key" translatable="false">MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEgjk4+m6Mx7xYArHlQ7TL7TtNtpQx/OzVOp5DCn0Xg/ftUtwfSA0Dg49k8VCExUmfJkeghrEjSUzOFNt6gzeJLQ==</string>
+</resources>

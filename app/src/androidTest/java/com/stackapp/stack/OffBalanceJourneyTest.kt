@@ -32,6 +32,7 @@ class OffBalanceJourneyTest {
     private var originalName=""
     private val events=java.util.concurrent.CopyOnWriteArrayList<ProductEvent>()
     private lateinit var account:JourneyAccount
+    private lateinit var reviewCode:String
     private val keepAwake=ActivityLifecycleCallback{activity,stage->
         if(stage==Stage.RESUMED)activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
@@ -51,6 +52,10 @@ class OffBalanceJourneyTest {
         server=JourneyServer();CompetitionFactory.testRepository=server
         pack=JourneyStylePack();StylePackFactory.testStore=pack
         account=JourneyAccount();BalanceAccountFactory.testAccount=account
+        val reviewKeys=java.security.KeyPairGenerator.getInstance("EC").apply{initialize(java.security.spec.ECGenParameterSpec("secp256r1"))}.generateKeyPair()
+        val publicKey=java.util.Base64.getEncoder().encodeToString(reviewKeys.public.encoded)
+        reviewCode=java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(java.security.Signature.getInstance("SHA256withECDSA").run{initSign(reviewKeys.private);update("Stack local review access v1".toByteArray());sign()})
+        ReviewerAccess.testVerifier={code->verifyReviewerCode(code,publicKey)}
         BalanceAnalyticsTestSink.accept={events.add(it)}
         events.clear();scenario=ActivityScenario.launch(MainActivity::class.java)
         scenario.onActivity{it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
@@ -61,7 +66,7 @@ class OffBalanceJourneyTest {
         device.pressHome()
         ActivityLifecycleMonitorRegistry.getInstance().removeLifecycleCallback(keepAwake)
         scenario.close();BalancePhysicsFactory.testCreate=null;CompetitionFactory.testRepository=null;StylePackFactory.testStore=null
-        BalanceAccountFactory.testAccount=null;ReviewGatewayFactory.testGateway=null;BalanceAnalyticsTestSink.accept=null
+        BalanceAccountFactory.testAccount=null;ReviewGatewayFactory.testGateway=null;BalanceAnalyticsTestSink.accept=null;ReviewerAccess.testVerifier=null
         original.forEach{(name,values)->val e=context.getSharedPreferences(name,Context.MODE_PRIVATE).edit().clear()
             values.forEach{(k,v)->when(v){is String->e.putString(k,v);is Boolean->e.putBoolean(k,v);is Int->e.putInt(k,v);is Long->e.putLong(k,v);is Float->e.putFloat(k,v);is Set<*>->{@Suppress("UNCHECKED_CAST") e.putStringSet(k,v as Set<String>)}}};e.commit()}
         RoomTapStore(context).saveDisplayName(originalName)
@@ -134,13 +139,28 @@ class OffBalanceJourneyTest {
         try{clock(600)}finally{pointer(android.view.MotionEvent.ACTION_UP,edge)}
     }
     private fun freshLesson(){scenario.close();context.getSharedPreferences("off_balance",Context.MODE_PRIVATE).edit().putBoolean("introduced",false).putInt("onboarding_step",0).putInt("onboarding_balance",0).commit();scenario=ActivityScenario.launch(MainActivity::class.java);requireText("LAND IT")}
+    private fun reviewAccess(onboarding:Boolean=false){
+        assertFalse(device.hasObject(By.text("TRY DEMO")))
+        clock(650)
+        val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+        if(android.os.Build.VERSION.SDK_INT>=33)automation.clearCache() else automation.serviceInfo=automation.serviceInfo
+        resource(if(onboarding)"onboarding_step" else "brand_mark").longClick()
+        requireText("REVIEW");resource("review_access_code").text=reviewCode
+        tap("CONTINUE");requireText("DEMO · SAMPLE DATA")
+    }
+    private fun captureScreen(name:String){
+        clock(700)
+        val image=checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+        java.io.File(context.getExternalFilesDir(null),name).outputStream().use{image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
+        image.recycle()
+    }
 
 
     @Test fun demoAccessShowsPremiumContentWithoutChangingPlayerState(){
         settings()
         val before=listOf("off_balance","rivals","balance_reminders","balance_flags","style_pack").associateWith{context.getSharedPreferences(it,Context.MODE_PRIVATE).all}
         val nameBefore=RoomTapStore(context).load().displayName
-        tap("TRY DEMO");requireText("DEMO · SAMPLE DATA");tap("SKIP");requireText("PLAY")
+        reviewAccess();tap("SKIP");requireText("PLAY")
         events.clear()
         settings();tap("DEMO ACCOUNT");requireText("LOCAL DEMO ACCOUNT");requireText("Demo Player")
         device.pressBack();requireText("SETTINGS");tap("STYLE PACK");requireText("YOUR STYLE")
@@ -160,13 +180,31 @@ class OffBalanceJourneyTest {
         assertFalse(device.hasObject(By.text("DEMO · SAMPLE DATA")))
         assertFalse(pack.state.value.owned)
     }
-    @Test fun demoIsReachableFromFreshOnboardingAndRestartsCleanly(){
-        freshLesson();tap("TRY DEMO");requireText("DEMO · SAMPLE DATA");requireText("LAND IT")
+    @Test fun privateReviewAccessWorksFromFreshOnboardingAndRestartsCleanly(){
+        freshLesson();reviewAccess(onboarding=true);requireText("LAND IT")
         tap("SKIP");settings();tap("HOW TO PLAY");requireText("LAND IT")
         described("Exit demo").click();requireText("LAND IT")
         assertFalse(BalancePreferences(context).introduced)
-        tap("TRY DEMO");requireText("LAND IT");requireText("DEMO · SAMPLE DATA")
+        reviewAccess(onboarding=true);requireText("LAND IT");requireText("DEMO · SAMPLE DATA")
         described("Exit demo").click();requireText("LAND IT")
+    }
+    @Test fun publicAppRejectsMissingAndInvalidReviewAccess(){
+        settings();assertFalse(device.hasObject(By.text("TRY DEMO")))
+        scenario.onActivity{it.startActivity(Intent(it,DemoActivity::class.java))}
+        clock(1200);requireText("SETTINGS");assertFalse(device.hasObject(By.text("DEMO · SAMPLE DATA")))
+        scenario.onActivity{it.startActivity(Intent(it,DemoActivity::class.java).putExtra(ReviewerAccess.EXTRA_CODE,"invalid"))}
+        clock(1200);requireText("SETTINGS");assertFalse(device.hasObject(By.text("DEMO · SAMPLE DATA")))
+        resource("brand_mark").longClick();requireText("REVIEW");tap("CONTINUE");requireText("CODE NOT RECOGNIZED. TRY AGAIN.")
+        resource("review_access_code").text="invalid";tap("CONTINUE");requireText("CODE NOT RECOGNIZED. TRY AGAIN.")
+        assertFalse(device.hasObject(By.text("DEMO · SAMPLE DATA")))
+        resource("review_access_code").text=reviewCode;tap("CONTINUE");requireText("DEMO · SAMPLE DATA")
+        device.setOrientationLeft();clock(800);requireText("DEMO · SAMPLE DATA")
+        device.setOrientationNatural();clock(800);described("Exit demo").click();requireText("SETTINGS")
+        assertFalse(device.hasObject(By.text("TRY DEMO")));captureScreen("settings-public.png")
+        device.pressBack();requireText("PLAY")
+        server.dailyLeaders=listOf("orbit_ada" to 42,"neon_sam" to 35,"soft_landing" to 28).mapIndexed{i,(name,score)->Competitor("leader_$i",name,mapOf("STEADY" to score),competitionDay(),mapOf("STEADY" to score))}
+        tap("TODAY");requireText("@orbit_ada");assertFalse(device.hasObject(By.text("DEMO · SAMPLE DATA")));captureScreen("today-public.png")
+        freshLesson();assertFalse(device.hasObject(By.text("TRY DEMO")));captureScreen("onboarding-public.png")
     }
     @Test fun publicLaunchResetClearsPreviewRecordsOnlyOnceAndPreservesPurchases(){
         scenario.close()

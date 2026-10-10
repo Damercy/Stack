@@ -33,10 +33,10 @@ import androidx.navigation3.ui.NavDisplay
 import com.stackapp.stack.tap.AndroidHapticEngine
 import kotlinx.coroutines.*
 import kotlin.math.abs
-private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TODAY, RIVALS, PROFILE, COUNTRY, STYLE }
+private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TODAY, RIVALS, PROFILE, COUNTRY, STYLE, REVIEW_ACCESS }
 @Composable fun OffBalanceApp(context:Context, initialName:String?, initialCountry:String, saveName:(String)->Unit, saveCountry:(String)->Unit, onLanding:suspend ()->Unit, openRivalsRequest:Int=0,demoSession:DemoSession?=null) {
     val storage=demoSession?.storage ?: context
-    fun openDemo(){context.startActivity(Intent(context,com.stackapp.stack.DemoActivity::class.java))}
+    fun openDemo(code:String){context.startActivity(Intent(context,com.stackapp.stack.DemoActivity::class.java).putExtra(ReviewerAccess.EXTRA_CODE,code))}
     val prefs=remember { BalancePreferences(storage) }
     val analytics=remember{BalanceAnalytics(context,enabled=demoSession==null)}
     val review=remember{BalanceReview(context,prefs,analytics)}
@@ -282,7 +282,8 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         onStep={next->if(next==onboardingStep+1){analytics.tutorial("tutorial_step_complete",onboardingStep,onboardingReplay);onboardingStep=next;prefs.onboardingStep=next;tilt.calibrate()}},
                         complete={finishOnboarding(false)},skip={finishOnboarding(true)},back={back()},
                         landed={if(vibration)haptic.clink(.55f)},playing={onboardingPlaying=it},balanceBits=prefs.onboardingBalance,saveBalance={prefs.onboardingBalance=it},
-                        account=accountState,signIn={(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}},useSaved={scope.launch{account.useSavedProfile()}},cancelSwitch={account.cancelSwitch()},username=own?.username,chooseUsername={go(Screen.PROFILE)},demo=if(demoSession==null)({openDemo()}) else null)
+                        account=accountState,signIn={(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}},useSaved={scope.launch{account.useSavedProfile()}},cancelSwitch={account.cancelSwitch()},username=own?.username,chooseUsername={go(Screen.PROFILE)},reviewAccess=if(demoSession==null)({go(Screen.REVIEW_ACCESS)}) else null)
+                    Screen.REVIEW_ACCESS -> Page({back()}) {ReviewAccessScreen{code->back();openDemo(code)}}
                     Screen.ACCOUNT -> Page({account.cancelSwitch();back()},footer={
                         if(accountState.message.isNotBlank())Utility(accountState.message,Modifier.padding(vertical=12.dp),size=11)
                         when {
@@ -345,7 +346,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         pause={paused=true;reward=null},resume={tilt.calibrate();paused=false},reset={start(trial,tutorial)},home={prefs.introduced=true;home()},settings={go(Screen.SETTINGS)},
                         toggleMusic={music=if(music>0f)0f else .7f;prefs.music=music},musicOn=music>0f,
                         useTouch={touch=true;prefs.touch=true},nextTrial={start((trial+1).coerceAtMost(3))},offer=showOffer,style={go(Screen.STYLE)},invite=config.friends && prefs.completedRuns>=runConfig.inviteAfterRuns,friends={go(Screen.RIVALS)},record=newBest)
-                    Screen.SETTINGS -> Page({back()}) {
+                    Screen.SETTINGS -> Page({back()},reviewAccess=if(demoSession==null)({go(Screen.REVIEW_ACCESS)}) else null) {
                         PosterFit("SETTINGS",color=Ink);Spacer(Modifier.height(15.dp))
                         SettingSlider("MUSIC",music,{music=it;prefs.music=it})
                         PressSurface(Modifier.align(Alignment.End).height(42.dp),onClick={go(Screen.MUSIC)}){Utility("SOUNDTRACK ›",Modifier.align(Alignment.Center))};Rule()
@@ -360,7 +361,6 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         };Rule();Spacer(Modifier.height(12.dp));Utility("SENSITIVITY");BalanceSlider(sensitivity,"Tilt sensitivity"){sensitivity=it;prefs.sensitivity=it};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Utility("GENTLE",size=9);Utility("SHARP",size=9)};Spacer(Modifier.height(12.dp));Rule()
                         if(pack.owned || config.styleDiscovery || config.offerSettings && config.payments && pack.ready){LinkRow("STYLE PACK"){go(Screen.STYLE)};Rule()}
                         if(accountState.configured || accountState.signedIn){LinkRow(if(accountState.demo)"DEMO ACCOUNT" else if(accountState.signedIn)"GOOGLE ACCOUNT" else "SAVE WITH GOOGLE"){go(Screen.ACCOUNT)};Rule()}
-                        if(demoSession==null){LinkRow("TRY DEMO"){openDemo()};Rule()}
                         LinkRow("HOW TO PLAY"){onboardingReplay=true;onboardingStep=0;prefs.onboardingStep=0;prefs.onboardingBalance=0;analytics.event("tutorial_replay",difficulty);go(Screen.ONBOARDING)};Rule()
                         LinkRow("RESET LEVEL"){start(trial,tutorial)};Rule();LinkRow("PRIVACY"){context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://stack-damercy.web.app/privacy")))};Rule()
                     }
@@ -491,7 +491,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
     if(current==Screen.PLAY && !paused && foreground)reward?.let{item->CompositionLocalProvider(LocalBalancePalette provides palette){RewardBurst(item,runConfig.celebrationMillis){if(reward?.id==item.id)reward=null}}}
     BackHandler(current==Screen.PLAY || current==Screen.ONBOARDING) { back() }
 }
-@Composable private fun Page(close:()->Unit, footer:@Composable ()->Unit={}, content:@Composable ColumnScope.()->Unit) {
+@Composable private fun Page(close:()->Unit, footer:@Composable ()->Unit={},reviewAccess:(()->Unit)?=null, content:@Composable ColumnScope.()->Unit) {
     val palette=LocalBalancePalette.current
     val Sun=palette.background;val Cobalt=palette.primary;val Vermilion=palette.accent;val Ink=palette.ink;val Cream=palette.paper
     BoxWithConstraints(Modifier.fillMaxSize().background(Sun)) {
@@ -500,7 +500,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
         Row(Modifier.fillMaxSize().padding(horizontal=if(wide)40.dp else 20.dp,vertical=8.dp),horizontalArrangement=Arrangement.spacedBy(40.dp)) {
             if(wide)Column(Modifier.weight(1f).fillMaxHeight(),verticalArrangement=Arrangement.Center){PosterFit("STACK",color=Ink);TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(240.dp),decorative=true)}
             Column(Modifier.weight(1f).fillMaxHeight().widthIn(max=520.dp)) {
-                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){Utility("STACK",Modifier.testTag("brand_mark"),color=Ink,size=9);Symbol("Back",onClick=close)}
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){Utility("STACK",Modifier.testTag("brand_mark").then(if(reviewAccess!=null)Modifier.pointerInput(reviewAccess){detectTapGestures(onLongPress={reviewAccess()})} else Modifier),color=Ink,size=9);Symbol("Back",onClick=close)}
                 BoxWithConstraints(Modifier.weight(1f)) {
                     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min=maxHeight),content=content)
                 }
