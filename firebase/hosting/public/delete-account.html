@@ -7,7 +7,7 @@
 :root{font-family:system-ui,sans-serif;color:#f4efe0;background:#111115;color-scheme:dark}body{margin:0}main{max-width:600px;padding:64px 24px;margin:auto}h1{font-size:clamp(32px,7vw,52px);line-height:1.1}p{line-height:1.65;color:#ccc}button{font:inherit;padding:16px 22px;background:#f2c744;border:0;color:#111115;cursor:pointer;border-radius:6px;margin:8px 8px 8px 0}button:disabled{opacity:.5;cursor:wait}#confirm{background:#e84b2c;color:white}a{color:#f2c744}[hidden]{display:none!important}#status{min-height:48px}small{line-height:1.6;display:block;color:#aaa}
 </style>
 <main>
-<p>STACK / OFF BALANCE</p>
+<p>STACK</p>
 <h1>Delete your account</h1>
 <p>Sign in with the Google account you connected to Stack. Then confirm deletion of
 your Stack login, public username, and online scores. This does not delete your Google account.</p>
@@ -19,6 +19,13 @@ Deleting a Stack account does not refund purchases.</p>
 <p id="status" role="status" aria-live="polite">Connecting…</p>
 <small>For a guest profile, use Today → your username → Delete profile in the app.
 Guest records cannot be accessed through a Google account you have never linked.</small>
+<section id="public-profile">
+<h2>Delete your public profile only</h2>
+<p>In Stack, open Today → your username → Delete profile → Delete.
+This removes your public username reservation and online scores immediately,
+while keeping your Stack sign-in, purchases, and local records. You can choose
+a new username later. To remove local records, clear Stack's app data in Android settings.</p>
+</section>
 <p><a href="/privacy">Privacy policy</a></p>
 </main>
 <script type="module">

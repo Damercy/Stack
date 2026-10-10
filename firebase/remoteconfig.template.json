@@ -1,5 +1,13 @@
 {
   "parameters": {
+    "free_passes_enabled": {
+      "defaultValue": { "value": "true" },
+      "valueType": "BOOLEAN"
+    },
+    "free_pass_chance_percent": {
+      "defaultValue": { "value": "20" },
+      "valueType": "NUMBER"
+    },
     "payments_enabled": {
       "defaultValue": {
         "value": "false"

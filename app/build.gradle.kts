@@ -34,8 +34,8 @@ android {
         applicationId = "com.stackapp.stack"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.4.3"
+        versionCode = 9
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Deliberately off until provider onboarding and purchase verification are complete.

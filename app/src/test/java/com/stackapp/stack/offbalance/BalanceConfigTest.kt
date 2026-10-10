@@ -38,4 +38,12 @@ class BalanceConfigTest {
         assertFalse(shouldRemind(context.copy(hour=2)))
         assertFalse(shouldRemind(context,BalanceConfig(reminderAwayHours=24)))
     }
+
+    @Test fun freePassRemoteControlsHaveSafeBounds(){
+        assertTrue(BalanceConfig.decode(emptyMap()).freePasses)
+        assertEquals(20,BalanceConfig.decode(emptyMap()).freePassChance)
+        assertFalse(BalanceConfig.decode(mapOf("free_passes_enabled" to false)).freePasses)
+        assertEquals(25,BalanceConfig.decode(mapOf("free_pass_chance_percent" to 100)).freePassChance)
+        assertEquals(0,BalanceConfig.decode(mapOf("free_pass_chance_percent" to -1)).freePassChance)
+    }
 }

@@ -12,9 +12,10 @@ object BalanceAnalyticsTestSink {
 }
 
 /** Aggregate product events; usernames, account IDs and receipts are excluded. */
-class BalanceAnalytics(context:Context) {
-    private val analytics=if(BuildConfig.USE_FIREBASE && !BuildConfig.DEBUG && runCatching{FirebaseApp.getInstance()}.isSuccess)FirebaseAnalytics.getInstance(context) else null
+class BalanceAnalytics(context:Context,private val enabled:Boolean=true) {
+    private val analytics=if(enabled && BuildConfig.USE_FIREBASE && !BuildConfig.DEBUG && runCatching{FirebaseApp.getInstance()}.isSuccess)FirebaseAnalytics.getInstance(context) else null
     private fun log(name:String,fields:Map<String,Any>){
+        if(!enabled)return
         if(BuildConfig.DEBUG)BalanceAnalyticsTestSink.accept?.invoke(ProductEvent(name,fields))
         analytics?.logEvent(name,Bundle().apply{fields.forEach{(k,v)->when(v){is String->putString(k,v);is Long->putLong(k,v);is Int->putLong(k,v.toLong());is Double->putDouble(k,v)}}})
     }

@@ -18,15 +18,16 @@ fun shouldRemind(c:ReminderContext,config:BalanceConfig=BalanceConfig())=config.
 fun shouldOfferPurchase(enabled:Boolean,catalogReady:Boolean,playing:Boolean,runs:Int,newBest:Boolean,now:Long,lastShown:Long)=
     enabled && catalogReady && !playing && runs>=3 && newBest && now-lastShown>=24*60*60*1000L
 
-class BalanceReminders(context:Context) {
+class BalanceReminders(context:Context,private val active:Boolean=true) {
     private val context=context.applicationContext
     private val prefs=context.getSharedPreferences("balance_reminders",Context.MODE_PRIVATE)
     var enabled:Boolean
         get()=prefs.getBoolean("enabled",false)
         set(v){prefs.edit().putBoolean("enabled",v).apply();sync()}
-    fun played(){prefs.edit().putLong("played",System.currentTimeMillis()).apply();context.getSystemService(NotificationManager::class.java).cancel(72)}
+    fun played(){if(!active)return;prefs.edit().putLong("played",System.currentTimeMillis()).apply();context.getSystemService(NotificationManager::class.java).cancel(72)}
     fun permitted()=Build.VERSION.SDK_INT<33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED
     fun sync(){
+        if(!active)return
         val work=WorkManager.getInstance(context)
         if(!enabled || !permitted() || !BalanceRemoteConfig.cached(context).reminders){work.cancelUniqueWork("balance-reminders");return}
         val request=PeriodicWorkRequestBuilder<BalanceReminderWorker>(6,TimeUnit.HOURS).setInitialDelay(6,TimeUnit.HOURS)

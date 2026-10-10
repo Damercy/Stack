@@ -12,6 +12,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
 import kotlin.math.*
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.*
+import kotlinx.coroutines.delay
 
 data class BalancePalette(val background:Color,val primary:Color,val accent:Color,val ink:Color,val paper:Color)
 enum class BalanceSkin(val title:String,val palette:BalancePalette) {
@@ -21,6 +24,21 @@ enum class BalanceSkin(val title:String,val palette:BalancePalette) {
     NIGHT("NIGHT",BalancePalette(Color(0xff171a29),Color(0xffcdd5f3),Color(0xfff37554),Color(0xffece9d8),Color(0xffb8bdc4)))
 }
 val LocalBalancePalette=staticCompositionLocalOf{BalanceSkin.GOLD.palette}
+
+/** Small, finite confirmation; the playing surface keeps receiving touches. */
+@Composable fun PassCue(modifier:Modifier=Modifier,id:Int,finished:()->Unit) {
+    val progress=remember(id){Animatable(0f)}
+    val done by rememberUpdatedState(finished)
+    LaunchedEffect(id){
+        progress.animateTo(.2f,tween(180,easing=LinearEasing));delay(700)
+        progress.animateTo(1f,tween(350,easing=LinearEasing));done()
+    }
+    Utility("PASS",modifier.testTag("free_pass").semantics {liveRegion=LiveRegionMode.Polite}.graphicsLayer {
+        val p=progress.value
+        alpha=min(p*8f,(1f-p)*5f).coerceIn(0f,1f)
+        translationY=-10.dp.toPx()*p
+    },color=LocalBalancePalette.current.accent,size=14)
+}
 data class BalanceReward(val id:Int,val label:String)
 
 /** A finite draw-only burst: no pointer interception and no idle particle loop. */

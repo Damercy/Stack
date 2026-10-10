@@ -43,6 +43,8 @@ class MainActivity : ComponentActivity() {
         splash.setKeepOnScreenCondition { loading }
         lifecycleScope.launch {
         val (store,state)=withContext(Dispatchers.IO) {
+            if(!BuildConfig.DEBUG && BuildConfig.VERSION_CODE>=8)
+                com.stackapp.stack.offbalance.PublicLaunchReset.prepare(this@MainActivity)
             listOf("off_balance","rivals","balance_reminders","balance_flags","style_pack").forEach {
                 getSharedPreferences(it,MODE_PRIVATE).all
             }

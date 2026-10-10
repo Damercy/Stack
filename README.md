@@ -1,6 +1,6 @@
 # Stack
 
-**Off Balance — tap, tilt, recover.**
+**Tap, tilt, recover.**
 
 A stacking game with a movable base, geometric towers, and original electro music.
 Land the next block, catch the lean, and beat your record. Play with a small device
@@ -36,6 +36,10 @@ tilt or a touch control. Built for phones and foldable screens.
 The optional Style Pack contains cosmetic themes and extra music. Availability is
 controlled remotely; checkout is shown only when the catalog and purchase
 verification service are ready. Core play does not require a purchase.
+
+Choose **Try demo** during onboarding or in Settings to explore every theme and
+soundtrack with sample profiles and scores. The demo uses local storage and leaves
+your account, purchases, and game records intact.
 
 ## Develop
 

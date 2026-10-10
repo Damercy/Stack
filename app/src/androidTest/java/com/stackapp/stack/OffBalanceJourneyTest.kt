@@ -41,7 +41,7 @@ class OffBalanceJourneyTest {
         device.setOrientationNatural()
         ActivityLifecycleMonitorRegistry.getInstance().addLifecycleCallback(keepAwake)
         Configurator.getInstance().waitForIdleTimeout=0
-        original=listOf("off_balance","rivals","balance_reminders","balance_flags","style_pack").associateWith{context.getSharedPreferences(it,Context.MODE_PRIVATE).all}
+        original=listOf("off_balance","rivals","balance_reminders","balance_flags","style_pack","stack_launch").associateWith{context.getSharedPreferences(it,Context.MODE_PRIVATE).all}
         originalName=RoomTapStore(context).load().displayName.orEmpty()
         context.getSharedPreferences("off_balance",Context.MODE_PRIVATE).edit().clear().putBoolean("introduced",true).putBoolean("touch",true).putString("difficulty","STEADY").commit()
         context.getSharedPreferences("rivals",Context.MODE_PRIVATE).edit().clear().commit()
@@ -60,21 +60,33 @@ class OffBalanceJourneyTest {
     @After fun restore(){
         device.pressHome()
         ActivityLifecycleMonitorRegistry.getInstance().removeLifecycleCallback(keepAwake)
-        scenario.close();CompetitionFactory.testRepository=null;StylePackFactory.testStore=null
+        scenario.close();BalancePhysicsFactory.testCreate=null;CompetitionFactory.testRepository=null;StylePackFactory.testStore=null
         BalanceAccountFactory.testAccount=null;ReviewGatewayFactory.testGateway=null;BalanceAnalyticsTestSink.accept=null
         original.forEach{(name,values)->val e=context.getSharedPreferences(name,Context.MODE_PRIVATE).edit().clear()
             values.forEach{(k,v)->when(v){is String->e.putString(k,v);is Boolean->e.putBoolean(k,v);is Int->e.putInt(k,v);is Long->e.putLong(k,v);is Float->e.putFloat(k,v);is Set<*>->{@Suppress("UNCHECKED_CAST") e.putStringSet(k,v as Set<String>)}}};e.commit()}
         RoomTapStore(context).saveDisplayName(originalName)
         BalanceReminders(context).sync();device.setOrientationNatural();device.unfreezeRotation()
     }
-    private fun missing(message:String):Nothing {device.dumpWindowHierarchy(java.io.File(context.cacheDir,"failure-journey.xml"));error(message)}
+    private fun missing(message:String):Nothing {
+        device.dumpWindowHierarchy(java.io.File(context.cacheDir,"failure-journey.xml"))
+        InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { screenshot ->
+            java.io.File(context.cacheDir,"failure-journey.png").outputStream().use{screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
+            screenshot.recycle()
+        }
+        error(message)
+    }
     private fun requireText(value:String):UiObject2 {
         device.waitForIdle(100)
-        return device.wait(Until.findObject(By.text(value)),10_000) ?: run {
-            // A window transition can leave the accessibility lookup cache behind its tree.
-            device.dumpWindowHierarchy(java.io.File(context.cacheDir,"lookup-refresh.xml"))
-            device.findObject(By.text(value)) ?: missing("Missing text: $value")
-        }
+        val deadline=android.os.SystemClock.uptimeMillis()+10_000
+        do {
+            // Compose can redraw a label before UiAutomator receives its invalidation event.
+            val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+            if(android.os.Build.VERSION.SDK_INT>=33)automation.clearCache()
+            else automation.serviceInfo=automation.serviceInfo
+            device.findObject(By.text(value))?.let{return it}
+            clock(100)
+        }while(android.os.SystemClock.uptimeMillis()<deadline)
+        missing("Missing text: $value")
     }
     private fun described(value:String):UiObject2 {device.wait(Until.hasObject(By.desc(value)),10_000);clock(650);device.dumpWindowHierarchy(java.io.File(context.cacheDir,"control-refresh.xml"));return device.findObject(By.desc(value)) ?: missing("Missing control: $value")}
     private fun resource(value:String)=device.wait(Until.findObject(By.res(value)),10_000) ?: missing("Missing element: $value")
@@ -123,6 +135,91 @@ class OffBalanceJourneyTest {
     }
     private fun freshLesson(){scenario.close();context.getSharedPreferences("off_balance",Context.MODE_PRIVATE).edit().putBoolean("introduced",false).putInt("onboarding_step",0).putInt("onboarding_balance",0).commit();scenario=ActivityScenario.launch(MainActivity::class.java);requireText("LAND IT")}
 
+
+    @Test fun demoAccessShowsPremiumContentWithoutChangingPlayerState(){
+        settings()
+        val before=listOf("off_balance","rivals","balance_reminders","balance_flags","style_pack").associateWith{context.getSharedPreferences(it,Context.MODE_PRIVATE).all}
+        val nameBefore=RoomTapStore(context).load().displayName
+        tap("TRY DEMO");requireText("DEMO · SAMPLE DATA");tap("SKIP");requireText("PLAY")
+        events.clear()
+        settings();tap("DEMO ACCOUNT");requireText("LOCAL DEMO ACCOUNT");requireText("Demo Player")
+        device.pressBack();requireText("SETTINGS");tap("STYLE PACK");requireText("YOUR STYLE")
+        described("Theme ${BalanceSkin.NIGHT.title}").click();requireText("SELECTED")
+        tap("RESTORE PURCHASES");requireText("Demo access · no purchase made")
+        device.pressBack();requireText("SETTINGS");tap("SOUNDTRACK ›");tap("AFTER HOURS")
+        device.pressBack();requireText("SETTINGS");device.pressBack();requireText("PLAY")
+        tap("TODAY");requireText("@orbit_ada");tap("FRIENDS")
+        resource("username_search").text="orbit";requireText("@orbit_ada")
+        if(device.hasObject(By.desc("Done"))){device.pressBack();requireText("FRIENDS");clock(600)}
+        tap("+ ADD");requireText("SAVED")
+        assertTrue("Demo gameplay must not log production events",events.isEmpty())
+        before.forEach{(key,values)->assertEquals("Production preference changed: $key",values,context.getSharedPreferences(key,Context.MODE_PRIVATE).all)}
+        assertEquals(nameBefore,RoomTapStore(context).load().displayName)
+        assertFalse(pack.state.value.owned)
+        described("Exit demo").click();requireText("SETTINGS")
+        assertFalse(device.hasObject(By.text("DEMO · SAMPLE DATA")))
+        assertFalse(pack.state.value.owned)
+    }
+    @Test fun demoIsReachableFromFreshOnboardingAndRestartsCleanly(){
+        freshLesson();tap("TRY DEMO");requireText("DEMO · SAMPLE DATA");requireText("LAND IT")
+        tap("SKIP");settings();tap("HOW TO PLAY");requireText("LAND IT")
+        described("Exit demo").click();requireText("LAND IT")
+        assertFalse(BalancePreferences(context).introduced)
+        tap("TRY DEMO");requireText("LAND IT");requireText("DEMO · SAMPLE DATA")
+        described("Exit demo").click();requireText("LAND IT")
+    }
+    @Test fun publicLaunchResetClearsPreviewRecordsOnlyOnceAndPreservesPurchases(){
+        scenario.close()
+        val prefs=BalancePreferences(context);prefs.record(Difficulty.STEADY,77);prefs.completedRuns=20
+        RoomTapStore(context).saveDisplayName("PreviewPlayer")
+        context.getSharedPreferences("stack_launch",Context.MODE_PRIVATE).edit().clear().commit()
+        val ownership=context.getSharedPreferences("style_pack",Context.MODE_PRIVATE)
+        ownership.edit().putBoolean("owned",true).commit()
+        context.getSharedPreferences("rivals",Context.MODE_PRIVATE).edit().putStringSet("ids",setOf("preview_rival")).commit()
+        assertTrue(PublicLaunchReset.prepare(context));assertEquals(0,prefs.best(Difficulty.STEADY))
+        assertEquals(0,prefs.completedRuns);assertFalse(prefs.introduced)
+        assertTrue(context.getSharedPreferences("rivals",Context.MODE_PRIVATE).all.isEmpty())
+        assertTrue(ownership.getBoolean("owned",false));assertTrue(RoomTapStore(context).load().displayName.isNullOrBlank())
+        prefs.record(Difficulty.STEADY,8)
+        assertFalse(PublicLaunchReset.prepare(context));assertEquals(8,prefs.best(Difficulty.STEADY))
+        scenario=ActivityScenario.launch(MainActivity::class.java);requireText("LAND IT")
+    }
+    @Test fun stackBrandFollowsNavigationAndContainsNoOldCornerBrand(){
+        assertEquals("STACK",resource("brand_mark").text)
+        settings();assertEquals("STACK",resource("brand_mark").text)
+        tap("SOUNDTRACK \u203a");assertEquals("STACK",resource("brand_mark").text)
+        assertFalse(device.hasObject(By.text("OFF BALANCE")))
+        device.pressBack();requireText("SETTINGS");device.pressBack();requireText("PLAY")
+        tap("TODAY");assertEquals("STACK",resource("brand_mark").text)
+        device.pressBack();requireText("PLAY");play();assertEquals("STACK",resource("brand_mark").text)
+    }
+    @Test fun passCueExpiresContinuesWithoutScoringAndCannotHideAnotherMiss(){
+        var game:BalancePhysics?=null
+        BalancePhysicsFactory.testCreate={mode,tutorial,trial,chance->BalancePhysics(mode,tutorial,trial,chance,passRoll={0}).also{game=it}}
+        play()
+        fun pieces():List<Pair<org.jbox2d.dynamics.Body,PiecePose>>{
+            val field=BalancePhysics::class.java.getDeclaredField("bodies").apply{isAccessible=true}
+            @Suppress("UNCHECKED_CAST") return field.get(game!!) as List<Pair<org.jbox2d.dynamics.Body,PiecePose>>
+        }
+        fun centeredDrop(){
+            InstrumentationRegistry.getInstrumentation().runOnMainSync{
+                BalancePhysics::class.java.getDeclaredField("nextX").apply{isAccessible=true}.setFloat(game,pieces().last().first.position.x)
+            };drop()
+        }
+        repeat(3){centeredDrop();waitScore(it+1);clock(350)}
+        centeredDrop()
+        InstrumentationRegistry.getInstrumentation().runOnMainSync{pieces().last().first.setTransform(org.jbox2d.common.Vec2(6f,-.1f),0f)}
+        resource("free_pass");assertEquals(3,score())
+        assertTrue(resource("run_status").contentDescription.endsWith("playing"))
+        assertEquals(1,events.count{it.name=="tower_free_pass"})
+        assertTrue(device.wait(Until.gone(By.res("free_pass")),4_000))
+        centeredDrop();waitScore(4);clock(350)
+        centeredDrop()
+        InstrumentationRegistry.getInstrumentation().runOnMainSync{pieces().last().first.setTransform(org.jbox2d.common.Vec2(6f,-.1f),0f)}
+        requireText("PLAY AGAIN");assertEquals(4,score());assertFalse(device.hasObject(By.res("free_pass")))
+        tap("PLAY AGAIN");resource("game_scene");assertEquals(0,score())
+        assertEquals(0,game!!.snapshot().passes);assertFalse(device.hasObject(By.res("free_pass")))
+    }
     @Test fun profileIsOnlyVisibleInFinalLessonAndSavedAccount(){
         flags(mapOf("google_sign_in_enabled" to true))
         account.state.value=account.state.value.copy(signedIn=true,name="Demo Player",email="player@example.org")

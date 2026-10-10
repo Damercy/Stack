@@ -84,6 +84,7 @@
         <li>A random account identifier used to protect your online records.</li>
         <li>Your chosen public username and tower records by difficulty.</li>
         <li>Local game progress, settings, and saved rivals.</li>
+        <li>Username searches sent to Firebase to find other players. Search text is not included in analytics events.</li>
         <li>Verified cosmetic pack entitlement status, where applicable.</li>
         <li>
           Aggregate usage analytics, such as screen visits, onboarding steps, runs,
@@ -123,6 +124,9 @@
         Aggregate usage events may include completed runs, layer counts, difficulty,
         celebrations, and offer views. These events do not include usernames,
         emails, Google identities, purchase tokens, or payment details.
+        Firebase Analytics also uses an app-instance identifier and derives coarse
+        location from masked network IP addresses for aggregate reports. Stack
+        does not request location permission, read GPS, or collect precise location.
       </p>
 
       <h2>Payments</h2>
@@ -157,8 +161,8 @@
 
       <h2>Children's Privacy</h2>
       <p>
-        Stack is not designed for children under 13. The Google Play target
-        audience selection should match the final store listing.
+        Stack is intended for players aged 13 and older and is not designed for
+        children under 13.
       </p>
 
       <h2>Contact</h2>

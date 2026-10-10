@@ -34,16 +34,18 @@ import com.stackapp.stack.tap.AndroidHapticEngine
 import kotlinx.coroutines.*
 import kotlin.math.abs
 private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS, MUSIC, SETTINGS, TODAY, RIVALS, PROFILE, COUNTRY, STYLE }
-@Composable fun OffBalanceApp(context:Context, initialName:String?, initialCountry:String, saveName:(String)->Unit, saveCountry:(String)->Unit, onLanding:suspend ()->Unit, openRivalsRequest:Int=0) {
-    val prefs=remember { BalancePreferences(context) }
-    val analytics=remember{BalanceAnalytics(context)}
+@Composable fun OffBalanceApp(context:Context, initialName:String?, initialCountry:String, saveName:(String)->Unit, saveCountry:(String)->Unit, onLanding:suspend ()->Unit, openRivalsRequest:Int=0,demoSession:DemoSession?=null) {
+    val storage=demoSession?.storage ?: context
+    fun openDemo(){context.startActivity(Intent(context,com.stackapp.stack.DemoActivity::class.java))}
+    val prefs=remember { BalancePreferences(storage) }
+    val analytics=remember{BalanceAnalytics(context,enabled=demoSession==null)}
     val review=remember{BalanceReview(context,prefs,analytics)}
-    val account=remember{BalanceAccountFactory.create(context)}
+    val account=remember{demoSession?.account ?: BalanceAccountFactory.create(context)}
     val accountState by account.state.collectAsState()
-    val remote=remember{BalanceRemoteConfig(context)}
-    val config by remote.state.collectAsState()
+    val remote=remember{BalanceRemoteConfig(storage,enabled=demoSession==null)}
+    val config by (demoSession?.config ?: remote.state).collectAsState()
     val configUpdate by remote.updateRevision.collectAsState()
-    val store=remember{StylePackFactory.create(context)}
+    val store=remember{demoSession?.pack ?: StylePackFactory.create(context)}
     val pack by store.state.collectAsState()
     var skin by remember{mutableStateOf(prefs.skin)}
     val palette=if(pack.owned)skin.palette else BalanceSkin.GOLD.palette
@@ -62,9 +64,9 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
     val audio=remember { BalanceAudio(context) }
     val haptic=remember { AndroidHapticEngine(context) }
     val scope=rememberCoroutineScope()
-    val social=remember{CompetitionFactory.create()}
-    val rivals=remember{RivalStore(context)}
-    val reminders=remember{BalanceReminders(context)}
+    val social=remember{demoSession?.competition ?: CompetitionFactory.create()}
+    val rivals=remember{RivalStore(storage)}
+    val reminders=remember{BalanceReminders(storage,active=demoSession==null)}
     var reminderOn by remember{mutableStateOf(reminders.enabled && reminders.permitted())}
     val permission=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->reminderOn=granted;reminders.enabled=granted}
     var own by remember{mutableStateOf<Competitor?>(null)}
@@ -113,7 +115,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
         if(current==Screen.MUSIC && foreground && preview && track>=3 && !pack.owned){delay(15_000);preview=false}
         if(current!=Screen.MUSIC && !pack.owned && track>=3){preview=false;track=prefs.track.coerceIn(0,2)}
     }
-    var game by remember { mutableStateOf(BalancePhysics(difficulty,tutorial,trial)) }
+    var game by remember { mutableStateOf(BalancePhysicsFactory.create(difficulty,tutorial,trial,if(config.freePasses)config.freePassChance else 0)) }
     val frozen=remember { mutableStateOf(game.snapshot()) }
     var runConfig by remember{mutableStateOf(config)}
     var runBest by remember{mutableIntStateOf(prefs.best(difficulty))}
@@ -122,6 +124,7 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
     var reward by remember{mutableStateOf<BalanceReward?>(null)}
     var rewardId by remember{mutableIntStateOf(0)}
     var recoveryShown by remember{mutableStateOf(false)}
+    var passesLogged by remember{mutableIntStateOf(0)}
     var offerShown by remember{mutableStateOf(false)}
     var homeOffer by remember{mutableStateOf(false)}
     LaunchedEffect(current,foreground,pack.owned,pack.ready,config){
@@ -225,9 +228,9 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
         } else if(navigation.size>1){if(navigation.last()==Screen.ACCOUNT)account.cancelSwitch();navigation.removeAt(navigation.lastIndex)}
     }
     fun start(selectedTrial:Int=-1, first:Boolean=false){
-        runConfig=config;runBest=prefs.best(difficulty);runEnded=false;newBest=false;reward=null;recoveryShown=false;offerShown=false
+        runConfig=config;runBest=prefs.best(difficulty);runEnded=false;newBest=false;reward=null;recoveryShown=false;passesLogged=0;offerShown=false
         trial=selectedTrial;tutorial=first;paused=false;down=false;won=false;score=0;started=false
-        game=BalancePhysics(difficulty,tutorial,trial);frozen.value=game.snapshot();reminders.played()
+        game=BalancePhysicsFactory.create(difficulty,tutorial,trial,if(runConfig.freePasses)runConfig.freePassChance else 0);frozen.value=game.snapshot();reminders.played()
         navigation.clear();navigation.add(Screen.HOME);navigation.add(Screen.PLAY);tilt.calibrate()
     }
     fun finishOnboarding(skipped:Boolean){
@@ -261,8 +264,12 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
     }
     val audioStatus=audio.state.lowercase()
     CompositionLocalProvider(LocalBalancePalette provides palette) {
-    Box(Modifier.fillMaxSize().background(Sun).safeDrawingPadding().imePadding().semantics {testTagsAsResourceId=true;contentDescription="Off Balance. Music $audioStatus"}.testTag("balance_app")) {
-        SharedTransitionLayout {
+    Box(Modifier.fillMaxSize().background(Sun).safeDrawingPadding().imePadding().semantics {testTagsAsResourceId=true;contentDescription="Stack. Music $audioStatus"}.testTag("balance_app")) {
+        if(demoSession!=null)Row(Modifier.fillMaxWidth().height(40.dp).background(Ink).padding(horizontal=16.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){
+            Utility("DEMO · SAMPLE DATA",color=Sun,size=10)
+            PressSurface(Modifier.height(40.dp),"Exit demo",onClick={(context as? android.app.Activity)?.finish()}){Utility("EXIT",Modifier.align(Alignment.Center),color=Sun,size=11)}
+        }
+        SharedTransitionLayout(Modifier.padding(top=if(demoSession!=null)40.dp else 0.dp)) {
         CompositionLocalProvider(LocalBalanceShared provides this@SharedTransitionLayout) {
         NavDisplay(backStack=navigation,onBack={back()},modifier=Modifier.fillMaxSize(),
             transitionSpec={ (fadeIn(tween(130)) + slideInHorizontally(spring(.83f,650f)){it/5}) togetherWith (fadeOut(tween(90))+slideOutHorizontally(tween(160)){-it/8}) },
@@ -275,24 +282,24 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                         onStep={next->if(next==onboardingStep+1){analytics.tutorial("tutorial_step_complete",onboardingStep,onboardingReplay);onboardingStep=next;prefs.onboardingStep=next;tilt.calibrate()}},
                         complete={finishOnboarding(false)},skip={finishOnboarding(true)},back={back()},
                         landed={if(vibration)haptic.clink(.55f)},playing={onboardingPlaying=it},balanceBits=prefs.onboardingBalance,saveBalance={prefs.onboardingBalance=it},
-                        account=accountState,signIn={(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}},useSaved={scope.launch{account.useSavedProfile()}},cancelSwitch={account.cancelSwitch()},username=own?.username,chooseUsername={go(Screen.PROFILE)})
+                        account=accountState,signIn={(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}},useSaved={scope.launch{account.useSavedProfile()}},cancelSwitch={account.cancelSwitch()},username=own?.username,chooseUsername={go(Screen.PROFILE)},demo=if(demoSession==null)({openDemo()}) else null)
                     Screen.ACCOUNT -> Page({account.cancelSwitch();back()},footer={
                         if(accountState.message.isNotBlank())Utility(accountState.message,Modifier.padding(vertical=12.dp),size=11)
                         when {
                             accountState.busy -> Utility("CONNECTING…",Modifier.padding(vertical=16.dp))
                             accountState.savedProfile -> {Action("USE SAVED PROFILE"){scope.launch{account.useSavedProfile()}};LinkRow("CANCEL"){account.cancelSwitch()}}
-                            accountState.signedIn -> {LinkRow("SIGN OUT"){scope.launch{account.signOut()}};LinkRow("DELETE ACCOUNT"){context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://stack-damercy.web.app/delete-account")))}}
-                            accountState.configured -> {Action("CONTINUE WITH GOOGLE"){(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}};LinkRow("KEEP PLAYING AS GUEST"){back()}}
+                            accountState.signedIn -> {LinkRow("SIGN OUT"){scope.launch{account.signOut()}};if(demoSession==null)LinkRow("DELETE ACCOUNT"){context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://stack-damercy.web.app/delete-account")))}}
+                            accountState.configured -> {Action(if(accountState.demo)"USE DEMO ACCOUNT" else "CONTINUE WITH GOOGLE"){(context as? android.app.Activity)?.let{activity->scope.launch{account.signIn(activity)}}};LinkRow("KEEP PLAYING AS GUEST"){back()}}
                             else -> Action("KEEP PLAYING"){back()}
                         }
                     }) {
                         PosterFit(if(accountState.signedIn)"SAVED" else "YOUR GAME",color=Ink)
                         Spacer(Modifier.height(24.dp))
                         if(accountState.signedIn){AccountIdentityCard(accountState,own?.username);Spacer(Modifier.height(18.dp))}
-                        Utility(if(accountState.signedIn)"CONNECTED WITH GOOGLE" else "KEEP YOUR USERNAME AND RECORDS ACROSS DEVICES.",size=11)
+                        Utility(if(accountState.demo)"LOCAL DEMO ACCOUNT" else if(accountState.signedIn)"CONNECTED WITH GOOGLE" else "KEEP YOUR USERNAME AND RECORDS ACROSS DEVICES.",size=11)
                         if(accountState.signedIn){Spacer(Modifier.height(12.dp));Utility(if(loadingSocial)"LOADING YOUR RECORDS…" else own?.let{"PLAYING AS @${it.username}"} ?: "YOU'RE SIGNED IN. CHOOSE A USERNAME TO COMPETE.",size=11);if(!loadingSocial && own==null)LinkRow("CHOOSE USERNAME"){go(Screen.PROFILE)}}
                         Spacer(Modifier.height(18.dp));TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(200.dp),decorative=true)
-                        Utility("Your Google name and email stay off the leaderboard. Choose a public username separately.",size=11)
+                        Utility(if(accountState.demo)"Sample identity and scores stay in this demo." else "Your Google name and email stay off the leaderboard. Choose a public username separately.",size=11)
                         Spacer(Modifier.height(16.dp));Utility("Guest play stays available. Signing out keeps device records here.",size=10)
                         Spacer(Modifier.weight(1f))
                     }
@@ -332,7 +339,9 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                     Screen.PLAY -> PlayScreen(game,frozen,navigation.last()==Screen.PLAY && foreground,navigation.last()==Screen.PLAY && !paused && !down && !won && foreground && started,paused,down,won,tutorial,trial,score,touch,
                         balance={ if(touch)game.setInput(it) },tickInput={if(!touch)game.setInput((tilt.value*(.6f+sensitivity*1.6f)).coerceIn(-1f,1f))},
                         drop={if(!down && !won && !paused){audio.interaction();if(!started)tilt.calibrate(); if(game.drop()){if(!started){if(prefs.firstPlayedAt==0L)prefs.firstPlayedAt=System.currentTimeMillis();analytics.event("tower_run_start",difficulty)};started=true;if(vibration)haptic.clink(.55f)}}},
-                        frameChanged={frame ->landed(frame.score,frame.recovered,frame.holdSeconds);if(frame.down && !down){down=true;prefs.introduced=true;tutorial=false;endRun(false)}},
+                        frameChanged={frame ->
+                            if(frame.passes>passesLogged){passesLogged=frame.passes;analytics.event("tower_free_pass",difficulty,frame.score);if(vibration)haptic.clink(.3f)}
+                            landed(frame.score,frame.recovered,frame.holdSeconds);if(frame.down && !down){down=true;prefs.introduced=true;tutorial=false;endRun(false)}},
                         pause={paused=true;reward=null},resume={tilt.calibrate();paused=false},reset={start(trial,tutorial)},home={prefs.introduced=true;home()},settings={go(Screen.SETTINGS)},
                         toggleMusic={music=if(music>0f)0f else .7f;prefs.music=music},musicOn=music>0f,
                         useTouch={touch=true;prefs.touch=true},nextTrial={start((trial+1).coerceAtMost(3))},offer=showOffer,style={go(Screen.STYLE)},invite=config.friends && prefs.completedRuns>=runConfig.inviteAfterRuns,friends={go(Screen.RIVALS)},record=newBest)
@@ -350,7 +359,8 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
                             Row(Modifier.border(1.dp,Ink)) {listOf("TILT","TOUCH").forEachIndexed {i,label -> PressSurface(Modifier.width(70.dp).height(42.dp).background(if(touch==(i==1))Ink else Sun),onClick={touch=i==1 || !tilt.available;prefs.touch=touch}){Utility(label,Modifier.align(Alignment.Center),if(touch==(i==1))Sun else Ink)} } }
                         };Rule();Spacer(Modifier.height(12.dp));Utility("SENSITIVITY");BalanceSlider(sensitivity,"Tilt sensitivity"){sensitivity=it;prefs.sensitivity=it};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Utility("GENTLE",size=9);Utility("SHARP",size=9)};Spacer(Modifier.height(12.dp));Rule()
                         if(pack.owned || config.styleDiscovery || config.offerSettings && config.payments && pack.ready){LinkRow("STYLE PACK"){go(Screen.STYLE)};Rule()}
-                        if(accountState.configured || accountState.signedIn){LinkRow(if(accountState.signedIn)"GOOGLE ACCOUNT" else "SAVE WITH GOOGLE"){go(Screen.ACCOUNT)};Rule()}
+                        if(accountState.configured || accountState.signedIn){LinkRow(if(accountState.demo)"DEMO ACCOUNT" else if(accountState.signedIn)"GOOGLE ACCOUNT" else "SAVE WITH GOOGLE"){go(Screen.ACCOUNT)};Rule()}
+                        if(demoSession==null){LinkRow("TRY DEMO"){openDemo()};Rule()}
                         LinkRow("HOW TO PLAY"){onboardingReplay=true;onboardingStep=0;prefs.onboardingStep=0;prefs.onboardingBalance=0;analytics.event("tutorial_replay",difficulty);go(Screen.ONBOARDING)};Rule()
                         LinkRow("RESET LEVEL"){start(trial,tutorial)};Rule();LinkRow("PRIVACY"){context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://stack-damercy.web.app/privacy")))};Rule()
                     }
@@ -488,9 +498,9 @@ private enum class Screen { HOME, PLAY, ONBOARDING, ACCOUNT, DIFFICULTY, TRIALS,
         val wide=maxWidth>=650.dp
         val availableWidth=maxWidth
         Row(Modifier.fillMaxSize().padding(horizontal=if(wide)40.dp else 20.dp,vertical=8.dp),horizontalArrangement=Arrangement.spacedBy(40.dp)) {
-            if(wide)Column(Modifier.weight(1f).fillMaxHeight(),verticalArrangement=Arrangement.Center){PosterFit("OFF");PosterFit("BALANCE",color=Ink);TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(240.dp),decorative=true)}
+            if(wide)Column(Modifier.weight(1f).fillMaxHeight(),verticalArrangement=Arrangement.Center){PosterFit("STACK",color=Ink);TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(240.dp),decorative=true)}
             Column(Modifier.weight(1f).fillMaxHeight().widthIn(max=520.dp)) {
-                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){Utility("OFF BALANCE",color=Ink,size=9);Symbol("Back",onClick=close)}
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){Utility("STACK",Modifier.testTag("brand_mark"),color=Ink,size=9);Symbol("Back",onClick=close)}
                 BoxWithConstraints(Modifier.weight(1f)) {
                     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min=maxHeight),content=content)
                 }
@@ -517,7 +527,7 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
         val wide=maxWidth>=650.dp
         val availableWidth=maxWidth
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Utility("OFF BALANCE",color=Ink,size=9);Symbol("Settings",onClick=settings)}
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Utility("STACK",Modifier.testTag("brand_mark"),color=Ink,size=9);Symbol("Settings",onClick=settings)}
             if(wide)Row(Modifier.weight(1f).fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(50.dp)) {
                 Column(Modifier.weight(1f)){PosterFit("STACK");Utility("TAP. TILT. RECOVER.",Modifier.fillMaxWidth(),align=TextAlign.Center);TowerDrawing(decorativeFrame(),Modifier.fillMaxWidth().height(240.dp),decorative=true)}
                 Column(Modifier.weight(1f)){HomeActions(difficulty,best,modes,play,trials,today,trialsEnabled);style()}
@@ -548,6 +558,8 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
     var lean by remember(game){mutableFloatStateOf(0f)}
     var recovered by remember(game){mutableStateOf(false)}
     var hold by remember(game){mutableIntStateOf(0)}
+    var passes by remember(game){mutableIntStateOf(0)}
+    var showPass by remember(game){mutableStateOf(false)}
     val input by rememberUpdatedState(tickInput)
     val changed by rememberUpdatedState(frameChanged)
     LaunchedEffect(game,running,down,paused,visible) {
@@ -565,7 +577,9 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
             frameState.value=frame
             // Only coarse HUD changes recompose; the drawing reads the frame itself.
             val nextLean=(frame.lean*25).toInt()/25f;if(nextLean!=lean)lean=nextLean
-            recovered=frame.recovered;hold=frame.holdSeconds.toInt();changed(frame)
+            recovered=frame.recovered;hold=frame.holdSeconds.toInt()
+            if(frame.passes>passes){passes=frame.passes;showPass=true}
+            changed(frame)
         }
     }
     val latestDrop by rememberUpdatedState(drop)
@@ -576,7 +590,7 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
         val availableWidth=maxWidth
         val headline=when {down->"DOWN.";won->"NICE.";trial==1->"ROUND";trial>=0->"HOLD";abs(lean)>.26f->"EASY";recovered->"HOLD";else->"STACK"}
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().semantics{contentDescription="Run: $score layers, ${when{down->"over";won->"complete";paused->"paused";else->"playing"}}"}.testTag("run_status"),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){Utility("OFF BALANCE",color=Ink,size=9);Utility(if(trial>=0)"TRIAL 0${trial+1}" else if(score>0)layerLabel(score) else "");Symbol(if(paused||down||won)"Close" else "Pause",onClick=if(down||won)home else if(paused)resume else pause)}
+            Row(Modifier.fillMaxWidth().semantics{contentDescription="Run: $score layers, ${when{down->"over";won->"complete";paused->"paused";else->"playing"}}"}.testTag("run_status"),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){Utility("STACK",Modifier.testTag("brand_mark"),color=Ink,size=9);Utility(if(showPass && !paused && !down && !won)"" else if(trial>=0)"TRIAL 0${trial+1}" else if(score>0)layerLabel(score) else "");Symbol(if(paused||down||won)"Close" else "Pause",onClick=if(down||won)home else if(paused)resume else pause)}
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 if(wide)Row(Modifier.fillMaxSize(),verticalAlignment=Alignment.CenterVertically) {
                     Column(Modifier.weight(.9f).fillMaxHeight().padding(end=24.dp)) {
@@ -595,6 +609,7 @@ private fun decorativeFrame(variant:Int=1):BalanceFrame {
             }
             if(!wide)RunActions(paused,down,won,trial,hold,score,touch,tutorial,resume,reset,home,toggleMusic,musicOn,settings,useTouch,nextTrial,offer,style,invite,friends,record)
         }
+        if(showPass && !paused && !down && !won)PassCue(Modifier.align(Alignment.TopCenter).padding(top=12.dp),passes){showPass=false}
     }
 }
 @Composable private fun PlayCanvas(frame:State<BalanceFrame>,modifier:Modifier,paused:Boolean,drop:()->Unit,complete:Boolean){

@@ -176,4 +176,56 @@ class BalancePhysicsTest {
         val fresh=BalancePhysics(Difficulty.CHAOS)
         assertEquals(0,fresh.snapshot().score);assertEquals(1,fresh.snapshot().pieces.size);assertFalse(fresh.collapseFinished)
     }
+
+    private fun threeLayers(game:BalancePhysics) {
+        repeat(3){layer->
+            var ticks=0
+            while(abs(game.snapshot().incoming!!.x-game.snapshot().pieces.last().x)>.025f && ticks++<600)game.advance(BalancePhysics.STEP)
+            assertTrue(game.drop())
+            ticks=0
+            while(game.snapshot().score<layer+1 && !game.snapshot().down && ticks++<240)game.advance(BalancePhysics.STEP)
+            assertEquals(layer+1,game.snapshot().score);assertFalse(game.snapshot().down)
+            settle(game,.5)
+        }
+    }
+    private fun bodies(game:BalancePhysics):List<Pair<org.jbox2d.dynamics.Body,PiecePose>> {
+        val field=BalancePhysics::class.java.getDeclaredField("bodies").apply{isAccessible=true}
+        @Suppress("UNCHECKED_CAST") return field.get(game) as List<Pair<org.jbox2d.dynamics.Body,PiecePose>>
+    }
+    private fun miss(game:BalancePhysics):BalanceFrame {
+        assertTrue(game.drop())
+        bodies(game).last().first.setTransform(org.jbox2d.common.Vec2(6f,-.1f),0f)
+        return game.advance(BalancePhysics.STEP)
+    }
+    @Test fun freePassRemovesOnlyTheMissedPieceWithoutScoringAndNextDropWorks(){
+        val game=BalancePhysics(Difficulty.STEADY,passRoll={0});threeLayers(game)
+        val before=game.snapshot();val saved=miss(game)
+        assertFalse(saved.down);assertTrue(saved.canDrop);assertEquals(1,saved.passes)
+        assertEquals(before.score,saved.score);assertEquals(before.pieces.size,saved.pieces.size)
+        before.pieces.zip(saved.pieces).forEach{(a,b)->assertEquals(a.x,b.x,.02f);assertEquals(a.y,b.y,.02f)}
+        assertTrue(game.drop());val continued=settle(game)
+        assertFalse(continued.down);assertEquals(4,continued.score);assertEquals(1,continued.passes)
+    }
+    @Test fun freePassIsLimitedToOneAndFreshRunResetsIt(){
+        val game=BalancePhysics(Difficulty.STEADY,passRoll={0});threeLayers(game)
+        assertFalse(miss(game).down);assertTrue(miss(game).down)
+        assertFalse(game.drop());assertEquals(3,game.snapshot().score);assertEquals(1,game.snapshot().passes)
+        assertEquals(0,BalancePhysics(Difficulty.STEADY).snapshot().passes)
+    }
+    @Test fun freePassCannotSuppressSupportedTowerCollapseOrRescueEarlyRuns(){
+        val early=BalancePhysics(Difficulty.STEADY,passRoll={0})
+        assertTrue(miss(early).down);assertEquals(0,early.snapshot().passes)
+        val game=BalancePhysics(Difficulty.STEADY,passRoll={0});threeLayers(game);game.drop()
+        bodies(game).first().first.setTransform(org.jbox2d.common.Vec2(6f,0f),1f)
+        bodies(game).last().first.setTransform(org.jbox2d.common.Vec2(6f,-.1f),0f)
+        assertTrue(game.advance(BalancePhysics.STEP).down);assertEquals(0,game.snapshot().passes)
+    }
+    @Test fun freePassHonorsRemoteDisableRandomOutcomeAndTrials(){
+        listOf(BalancePhysics(Difficulty.STEADY,passChance=0,passRoll={0}),
+            BalancePhysics(Difficulty.STEADY,passRoll={20}),
+            BalancePhysics(Difficulty.STEADY,tutorial=true,passRoll={0}),
+            BalancePhysics(Difficulty.STEADY,trial=0,passRoll={0})).forEach{game->
+            threeLayers(game);assertTrue(miss(game).down);assertEquals(0,game.snapshot().passes)
+        }
+    }
 }

@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.tasks.await
 import java.util.UUID
 
-data class AccountState(val configured:Boolean=false,val signedIn:Boolean=false,val busy:Boolean=false,val message:String="",val savedProfile:Boolean=false,val revision:Int=0,val name:String="",val email:String="",val photoUrl:String="")
+data class AccountState(val configured:Boolean=false,val signedIn:Boolean=false,val busy:Boolean=false,val message:String="",val savedProfile:Boolean=false,val revision:Int=0,val name:String="",val email:String="",val photoUrl:String="",val demo:Boolean=false)
 interface BalanceAccount {
     val state:StateFlow<AccountState>
     fun configure(enabled:Boolean)

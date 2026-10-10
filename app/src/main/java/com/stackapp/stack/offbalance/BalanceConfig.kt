@@ -23,6 +23,7 @@ data class BalanceConfig(
     val reviews:Boolean=true, val reviewMinRuns:Int=5, val reviewAgeHours:Int=24,
     val googleSignIn:Boolean=false,
     val offerHome:Boolean=false,
+    val freePasses:Boolean=true, val freePassChance:Int=20,
 ) {
     fun homeOfferEligible(runs:Int,owned:Boolean,ready:Boolean,now:Long,lastShown:Long)=
         offerHome && payments && verificationReady && ready && !owned && runs>=minimumRuns && now-lastShown>=offerCooldownHours*3_600_000L
@@ -38,6 +39,7 @@ data class BalanceConfig(
             "invite_after_runs" to 3,"trials_enabled" to true,
             "reviews_enabled" to true,"review_min_runs" to 5,"review_min_age_hours" to 24,"google_sign_in_enabled" to false,
             "offer_home_enabled" to false,
+            "free_passes_enabled" to true,"free_pass_chance_percent" to 20,
         )
         fun decode(values:Map<String,Any>):BalanceConfig {
             fun bool(key:String)=values[key].toString().toBooleanStrictOrNull() ?: defaults[key] as Boolean
@@ -47,18 +49,19 @@ data class BalanceConfig(
                 bool("offer_results_enabled"),bool("offer_trials_enabled"),bool("offer_settings_enabled"),number("offer_min_runs",3,100),number("offer_cooldown_hours",24,720),
                 bool("celebrations_enabled"),number("celebration_duration_ms",600,1600),number("milestone_every",5,50),bool("friends_enabled"),bool("reminders_enabled"),bool("rival_reminders_enabled"),
                 number("reminder_away_hours",6,72),number("reminder_cooldown_hours",24,168),number("invite_after_runs",3,100),bool("trials_enabled"),
-                bool("reviews_enabled"),number("review_min_runs",5,100),number("review_min_age_hours",0,720),bool("google_sign_in_enabled"),bool("offer_home_enabled"))
+                bool("reviews_enabled"),number("review_min_runs",5,100),number("review_min_age_hours",0,720),bool("google_sign_in_enabled"),bool("offer_home_enabled"),
+                bool("free_passes_enabled"),number("free_pass_chance_percent",0,25))
         }
     }
 }
 
-class BalanceRemoteConfig(context:Context) {
+class BalanceRemoteConfig(context:Context,enabled:Boolean=true) {
     private val prefs=context.applicationContext.getSharedPreferences("balance_flags",Context.MODE_PRIVATE)
     private val owner=SupervisorJob()
     private val scope=CoroutineScope(owner+Dispatchers.IO)
     val state=MutableStateFlow(cached(context))
     val updateRevision=MutableStateFlow(0)
-    private val remote=if(BuildConfig.USE_FIREBASE && runCatching{FirebaseApp.getInstance()}.isSuccess)FirebaseRemoteConfig.getInstance() else null
+    private val remote=if(enabled && BuildConfig.USE_FIREBASE && runCatching{FirebaseApp.getInstance()}.isSuccess)FirebaseRemoteConfig.getInstance() else null
     private var listener:ConfigUpdateListenerRegistration?=null
     @Volatile private var pending=false
     init {
