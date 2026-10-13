@@ -6,6 +6,8 @@ A stacking game with a movable base, geometric towers, and original electro musi
 Land the next block, catch the lean, and beat your record. Play with a small device
 tilt or a touch control. Built for phones and foldable screens.
 
+**[Get Stack on Google Play](https://play.google.com/store/apps/details?id=com.stackapp.stack)** · [Website](https://stack.dayaonweb.dev)
+
 <p align="center">
   <img src="media/showcase/foldable.svg" width="800" alt="Stack gameplay on an unfolded device" />
 </p>
@@ -33,9 +35,8 @@ tilt or a touch control. Built for phones and foldable screens.
 - Save an online profile with optional Google sign-in; guest play stays available.
 - Enable play and rival reminders when you want them.
 
-The optional Style Pack contains cosmetic themes and extra music. Availability is
-controlled remotely; checkout is shown only when the catalog and purchase
-verification service are ready. Core play does not require a purchase.
+Core play is free. Optional packs add cosmetic themes and extra music when
+available in the app.
 
 ## Develop
 
