@@ -6,7 +6,11 @@ A stacking game with a movable base, geometric towers, and original electro musi
 Land the next block, catch the lean, and beat your record. Play with a small device
 tilt or a touch control. Built for phones and foldable screens.
 
-**[Get Stack on Google Play](https://play.google.com/store/apps/details?id=com.stackapp.stack)** · [Website](https://stack.dayaonweb.dev)
+<p>
+  <a href="https://play.google.com/store/apps/details?id=com.stackapp.stack"><img src="media/google-play-badge.png" width="208" alt="Get it on Google Play" /></a>
+</p>
+
+[Website](https://stack.dayaonweb.dev) · [Google Play](https://play.google.com/store/apps/details?id=com.stackapp.stack)
 
 <p align="center">
   <img src="media/showcase/foldable.svg" width="800" alt="Stack gameplay on an unfolded device" />
@@ -117,3 +121,5 @@ and include screenshots when the visual result changes. Do not commit private
 configuration, credentials, personal data, or local documentation directories.
 
 [Privacy](https://stack-damercy.web.app/privacy) · [Asset credits](app/src/main/assets/ASSET_SOURCES.md) · [Issues](https://github.com/Damercy/Stack/issues)
+
+Google Play and the Google Play logo are trademarks of Google LLC.
